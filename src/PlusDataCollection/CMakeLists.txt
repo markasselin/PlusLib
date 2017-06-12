@@ -469,12 +469,12 @@ ENDIF()
 # INTELREALSENSE support
 IF(PLUS_USE_INTELREALSENSE)
   SET(IntelRealSense_SRCS
-    IntelRealSense/vtkPlusIntelRealSenseTracker.cxx
+    IntelRealSense/vtkPlusIntelRealSenseVideoSource.cxx
   )
 
   IF(MSVC OR ${CMAKE_GENERATOR} MATCHES "Xcode")
     SET(IntelRealSense_HDRS
-      IntelRealSense/vtkPlusIntelRealSenseTracker.h
+      IntelRealSense/vtkPlusIntelRealSenseVideoSource.h
       )
   ENDIF()
 

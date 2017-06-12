@@ -134,6 +134,7 @@ public:
   PlusStatus DeepCopy( StreamBufferItem* dataItem );
 
   PlusVideoFrame& GetFrame() { return this->Frame; };
+  vtkPolyData* GetPolyData() { return this->PolyData; };
 
   /*! Set tracker matrix */
   PlusStatus SetMatrix( vtkMatrix4x4* matrix );
@@ -166,10 +167,16 @@ protected:
   /*! Custom frame fields */
   FieldMapType CustomFrameFields;
 
-  bool ValidTransformData;
+  // Video
   PlusVideoFrame Frame;
+
+  // Tracker
+  bool ValidTransformData;  
   vtkSmartPointer<vtkMatrix4x4> Matrix;
   ToolStatus Status;
+
+  // Surface mesh
+  vtkSmartPointer<vtkPolyData> PolyData;
 };
 
 #endif
