@@ -449,9 +449,7 @@ ENDIF()
 
 #*************************** IntelRealSenseTrackerTest ***************************
 IF(PLUS_USE_INTELREALSENSE)
-#  ADD_EXECUTABLE(vtkIntelRealSenseTrackerTest vtkIntelRealSenseTrackerTest.cxx)
-#  SET_TARGET_PROPERTIES(vtkIntelRealSenseTrackerTest PROPERTIES FOLDER Tests)
-#  TARGET_LINK_LIBRARIES(vtkIntelRealSenseTrackerTest vtkPlusDataCollection vtkPlusCommon vtkInteractionImage)
+  # ADD IntelRealSense Tests
 ENDIF()
 
 #*************************** vtkNVidiaDVPVideoSourceTest ***************************
@@ -459,6 +457,11 @@ IF(PLUS_USE_NVIDIA_DVP)
   ADD_EXECUTABLE(vtkNVidiaDVPVideoSourceTest vtkNVidiaDVPVideoSourceTest.cxx )
   SET_TARGET_PROPERTIES(vtkNVidiaDVPVideoSourceTest PROPERTIES FOLDER Tests)
   TARGET_LINK_LIBRARIES(vtkNVidiaDVPVideoSourceTest vtkPlusDataCollection )
+ENDIF()
+
+#*************************** OpticalMarkerTrackerTest ***************************
+IF(PLUS_USE_OPTICAL_MARKER_TRACKER)
+  # ADD OpticalMarkerTracker Tests
 ENDIF()
 
 #*************************** vtkOpenIGTLinkTrackerTest ***************************
