@@ -212,9 +212,6 @@ vtkPlusDeviceFactory::vtkPlusDeviceFactory()
 #ifdef PLUS_USE_MICRONTRACKER
   RegisterDevice("MicronTracker", "vtkPlusMicronTracker", (PointerToDevice)&vtkPlusMicronTracker::New);
 #endif
-#ifdef PLUS_USE_INTELREALSENSE
-  RegisterDevice("IntelRealSenseVideoSource", "vtkPlusIntelRealSenseVideoSource", (PointerToDevice)&vtkPlusIntelRealSenseVideoSource::New);
-#endif
 #ifdef PLUS_USE_OPTICAL_MARKER_TRACKER
   RegisterDevice("OpticalMarkerTracker", "vtkPlusOpticalMarkerTracker", (PointerToDevice)&vtkPlusOpticalMarkerTracker::New);
 #endif
@@ -264,6 +261,9 @@ vtkPlusDeviceFactory::vtkPlusDeviceFactory()
 #endif
 #ifdef PLUS_USE_ICCAPTURING_VIDEO
   RegisterDevice("ICCapturing", "vtkPlusICCapturingSource", (PointerToDevice)&vtkPlusICCapturingSource::New);
+#endif
+#ifdef PLUS_USE_INTELREALSENSE
+  RegisterDevice("IntelRealSenseVideo", "vtkPlusIntelRealSenseVideoSource", (PointerToDevice)&vtkPlusIntelRealSenseVideoSource::New);
 #endif
 #ifdef PLUS_USE_INTERSON_VIDEO
   RegisterDevice("IntersonVideo", "vtkPlusIntersonVideoSource", (PointerToDevice)&vtkPlusIntersonVideoSource::New);

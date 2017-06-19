@@ -8,11 +8,9 @@
 #define __vtkPlusIntelRealSenseVideoSource_h
 
 #include "vtkPlusDataCollectionExport.h"
-
 #include "vtkPlusDevice.h"
 
-class IntelRealSenseVideoSourceInterface;
-class vtkMatrix4x4;
+
 
 /*!
   \class vtkPlusIntelRealSenseVideoSource
@@ -22,6 +20,13 @@ class vtkMatrix4x4;
 class vtkPlusDataCollectionExport vtkPlusIntelRealSenseVideoSource : public vtkPlusDevice
 {
 public:
+  /*! Defines whether or not depth stream is used. */
+  enum OUTPUT_VIDEO_TYPE
+  {
+    OPTICAL,
+    OPTICAL_AND_DEPTH
+  };
+
   static vtkPlusIntelRealSenseVideoSource *New();
   vtkTypeMacro(vtkPlusIntelRealSenseVideoSource,vtkPlusDevice);
 
@@ -84,14 +89,6 @@ protected:
   /*! Stop the tracking system and bring it back to its initial state. */
   PlusStatus InternalStopRecording();
 
-  /*! Refresh the loaded markers by loading them from the Markers directory */
-  PlusStatus RefreshMarkerTemplates();
-
-  /*! Returns the transformation matrix of the index_th marker */
-  void GetTransformMatrix(int markerIndex, vtkMatrix4x4* transformMatrix);
-
-  /*! Pointer to the IntelRealSenseVideoSourceInterface class instance */
-  IntelRealSenseVideoSourceInterface* MT;
 
   /*! Non-zero if the tracker has been initialized */
   int IsTrackingInitialized;
@@ -103,16 +100,14 @@ protected:
   std::string CameraCalibrationFile;
   std::string DeviceName;
 
+  vtkPlusDataSource *output;
 
 
-#ifdef USE_INTELREALSENSE_TIMESTAMPS
-  double TrackerTimeToSystemTimeSec; // time_System = time_Tracker + TrackerTimeToSystemTimeSec
-  bool TrackerTimeToSystemTimeComputed; // the time offset is always computed when the first frame is received after start tracking
-#endif
 
 private:
   vtkPlusIntelRealSenseVideoSource(const vtkPlusIntelRealSenseVideoSource&);
-  void operator=(const vtkPlusIntelRealSenseVideoSource&);  
+  void operator=(const vtkPlusIntelRealSenseVideoSource&);
+  
 };
 
 #endif

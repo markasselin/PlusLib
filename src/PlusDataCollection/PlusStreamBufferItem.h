@@ -13,6 +13,7 @@ See License.txt for details.
 #include "PlusVideoFrame.h"
 
 #include "vtkSmartPointer.h"
+#include "vtkPolyData.h"
 
 #include <vector>
 

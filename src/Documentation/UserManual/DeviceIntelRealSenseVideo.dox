@@ -1,0 +1,42 @@
+/*!
+\page DeviceIntelRealSenseVideo Intel(R) RealSense(TM) camera
+
+\section DeviceIntelRealSenseVideoHwDevices Supported hardware devices
+  - Intel(R) RealSense(TM) SR300 Gen 2, available from <a href="https://click.intel.com/intelrealsense-developer-kit-featuring-sr300.html">Intel Click</a>.
+
+\section DeviceIntelRealSenseVideoSupportedPlatforms Included in packages
+  - This device is not included in any of the standard packages
+
+\section DeviceIntelRealSenseVideoInstallation Installation
+  - Plug camera into a USB-3 port and wait for drivers to install.  This should happen automatically.
+  - Open DeviceManager and verify that you have the following entries
+    - "Imaging devices" containing:
+      - Intel(R) RealSense(TM) Camera SR300 Depth
+      - Intel(R) RealSense(TM) Camera SR300 RGB
+      - Intel(R) RealSense(TM) Camera SR300 Virtual Driver
+    - "Universal Serial Bus devices" containing:
+      - Intel(R) RealSense(TM) Camera SR300
+  - If you don't see these drivers, try installing the <a href="https://downloadmirror.intel.com/25044/eng/intel_rs_dcm_sr300_3.3.27.5718.exe">Intel SR300 driver (100MB)</a>.
+  \n
+  - Install the Essentials package of the <a href="https://software.intel.com/en-us/intel-realsense-sdk/download">Intel(R) RealSense(TM) SDK</a>.  You will have to enter your email to obtain access.
+
+\section DeviceIntelRealSenseVideoConfigSettings Device configuration settings
+- \xmlAtt \ref DeviceType "Type" = \c "IntelRealSenseVideo" \RequiredAtt
+- \xmlAtt \ref DeviceAcquisitionRate "AcquisitionRate" \OptionalAtt{30}
+
+- \xmlAtt \b FrameSize Size of the video frame. \OptionalAtt{640 480}
+- \xmlAtt \b VideoFormat It specifies the video subtype format. All the available formats are described <a href="http://msdn.microsoft.com/en-us/library/windows/desktop/aa370819(v=vs.85).aspx">here.</a> \OptionalAtt{YUY2
+- \xmlElem \ref DataSources Exactly one \c DataSource child element is required. \RequiredAtt
+  - \xmlElem \ref DataSource \RequiredAtt
+   - \xmlAtt \ref PortUsImageOrientation \RequiredAtt
+   - \xmlAtt \ref ImageType Color image acquisition is supported by setting the imaging device's common attribute \c ImageType="RGB_COLOR". \OptionalAtt{BRIGHTNESS}
+   - \xmlAtt \ref BufferSize \OptionalAtt{150}
+   - \xmlAtt \ref AveragedItemsForFiltering \OptionalAtt{20}
+   - \xmlAtt \ref ClipRectangleOrigin \OptionalAtt{0 0 0}
+   - \xmlAtt \ref ClipRectangleSize \OptionalAtt{0 0 0}
+
+\section DeviceIntelRealSenseVideoExampleConfigFile
+
+\include "ConfigFiles/PlusDeviceSet_Server_IntelRealSenseVideo.xml"
+
+*/
