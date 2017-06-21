@@ -45,6 +45,7 @@ StreamBufferItem& StreamBufferItem::operator=( StreamBufferItem const& dataItem 
   }
 
   this->Frame = dataItem.Frame;
+  this->PolyData = dataItem.PolyData;
   this->FilteredTimeStamp = dataItem.FilteredTimeStamp;
   this->UnfilteredTimeStamp = dataItem.UnfilteredTimeStamp;
   this->Index = dataItem.Index;

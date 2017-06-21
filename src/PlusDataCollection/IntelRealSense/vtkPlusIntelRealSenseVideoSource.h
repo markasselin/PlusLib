@@ -45,14 +45,6 @@ public:
     to the tools.  This should only be used within vtkTracker.cxx.
   */
   PlusStatus InternalUpdate(); 
-
-  /*!
-    Get image from the camera into VTK images. If an input arguments is NULL then that image is not retrieved.
-  */
-  PlusStatus GetImage(vtkImageData* leftImage, vtkImageData* rightImage);
-  
-  /*! Get the status of the IntelRealSenseVideoSource (Tracking or not) */
-  vtkGetMacro(IsTrackingInitialized, int);
  
   /*! Read IntelRealSenseVideoSource configuration and update the tracker settings accordingly */
   virtual PlusStatus ReadConfiguration( vtkXMLDataElement* config );
@@ -65,11 +57,11 @@ public:
   /*! Disconnect from the tracker hardware */
   PlusStatus InternalDisconnect();
 
-  vtkSetMacro(CameraCalibrationFile, std::string);
-  vtkGetMacro(CameraCalibrationFile, std::string);
+  //vtkSetMacro(CameraCalibrationFile, std::string);
+  //vtkGetMacro(CameraCalibrationFile, std::string);
 
-  vtkSetMacro(DeviceName, std::string);
-  vtkGetMacro(DeviceName, std::string);
+  //vtkSetMacro(DeviceName, std::string);
+  //vtkGetMacro(DeviceName, std::string);
 
 protected:
   vtkPlusIntelRealSenseVideoSource();
@@ -89,20 +81,17 @@ protected:
   /*! Stop the tracking system and bring it back to its initial state. */
   PlusStatus InternalStopRecording();
 
+  void GeneratePolyData(vtkSmartPointer<vtkPolyData>, unsigned char * image);
 
   /*! Non-zero if the tracker has been initialized */
   int IsTrackingInitialized;
 
-  /*! Index of the last frame number. This is used for providing a frame number when the tracker doesn't return any transform */
-  double LastFrameNumber;
   
-  unsigned int FrameNumber;
-  std::string CameraCalibrationFile;
-  std::string DeviceName;
+  long FrameNumber;
+  //std::string CameraCalibrationFile;
+  //std::string DeviceName;
 
   vtkPlusDataSource *output;
-
-
 
 private:
   vtkPlusIntelRealSenseVideoSource(const vtkPlusIntelRealSenseVideoSource&);

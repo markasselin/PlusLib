@@ -3,8 +3,6 @@ Program: Plus
 Copyright (c) Laboratory for Percutaneous Surgery. All rights reserved.
 See License.txt for details.
 =========================================================Plus=header=end*/
-//Marker Location
-//C:\devel\PlusExp-bin\PlusLibData\ConfigFiles\IntelRealSenseToolDefinitions
 #include "PlusConfigure.h"
 #include "vtkPlusIntelRealSenseVideoSource.h"
 
@@ -26,6 +24,14 @@ See License.txt for details.
 #include "RealSense\SampleReader.h"
 #include "RealSense\Projection.h"
 
+#include "vtkXMLPolyDataWriter.h"
+#include "vtkPolyDataMapper.h"
+#include "vtkActor.h"
+#include "vtkRenderWindowInteractor.h"
+#include <vtkRenderer.h>
+#include <vtkRenderWindow.h>
+#include <vtkProperty.h>
+
 #define DEFAULT_FRAME_RATE            30
 #define SR300_MAX_FRAME_RATE          30    // for optical && depth
 #define SR300_MAX_OPTICAL_WIDTH       1920
@@ -46,32 +52,28 @@ class vtkPlusIntelRealSenseVideoSource::vtkInternal
 public:
   vtkPlusIntelRealSenseVideoSource *External;
 
-  struct RSVideoFormat
+  struct RSVideo
   {
-    // width, height, depth
     int FrameSizePx[3] = { 0, 0, 1 };
     RS::Image::PixelFormat RSPixelFormat;
-  };
-
-  struct RSVideoFrame
-  {
-    RS::ImageData RSImageData;
     PlusVideoFrame PlusFrame;
-    vtkPlusDataSource* aSource;
+    vtkPlusDataSource* PlusSource;
   };
 
   OUTPUT_VIDEO_TYPE OutputVideoType;
   
-  RSVideoFormat ColorFormat;
-  RSVideoFrame ColorFrame;
-
-  RSVideoFormat DepthFormat;
-  RSVideoFrame DepthFrame;
+  RSVideo* ColorStream = new RSVideo;
+  RSVideo* DepthStream = new RSVideo;
 
   // global Intel RealSense objects
   RS::Session* Session;
   RS::SenseManager* SenseManager;
+  RS::CaptureManager* CaptureManager;
+  RS::Device* Device;
+  //RS::Capture* Capture;
   RS::Projection* Projection;
+  RS::Image* Image;
+  RS::Point3DF32 *depthMap;
 
   vtkInternal(vtkPlusIntelRealSenseVideoSource* external)
     : External(external)
@@ -95,8 +97,6 @@ vtkPlusIntelRealSenseVideoSource::vtkPlusIntelRealSenseVideoSource()
   // No callback function provided by the device, so the data capture thread will be used to poll the hardware and add new items to the buffer
   this->StartThreadForInternalUpdates=true;
   this->AcquisitionRate = 20;
-  
-  this->DeviceName = "Intel RealSense 3D Camera SR300";
 }
 
 //----------------------------------------------------------------------------
@@ -132,60 +132,91 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalStopRecording()
 }
 
 //----------------------------------------------------------------------------
+void GeneratePolyData(vtkSmartPointer<vtkPolyData>, unsigned char * image)
+{
+
+}
+
+// for testing
+int count = 0;
+
+//----------------------------------------------------------------------------
 PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
 {
-  //TODO: Use projection to map optical->depth (or vice versa)
   // wait until both optical and depth frames are ready
   if (this->Internal->SenseManager->AcquireFrame(true) < RS::Status::STATUS_NO_ERROR)
   {
     return PLUS_SUCCESS;
   }
 
-  // get frame from RSSDK
+  // get frame from RealSense
   RS::Capture::Sample *sample = this->Internal->SenseManager->QuerySample();
 
   // get updated system time 
   const double unfilteredTimestamp = vtkPlusAccurateTimer::GetSystemTime();
 
+  
   // Update optical frame and add to buffer
   //TODO: Re-implement PlusStatus functionality on the buffer frame additions so that update fails if image cannot be added
   if (this->Internal->OutputVideoType == OPTICAL || this->Internal->OutputVideoType == OPTICAL_AND_DEPTH)
   {
-    sample->color->AcquireAccess(RS::Image::ACCESS_READ,
-      RS::Image::PixelFormat::PIXEL_FORMAT_RGB24,
-      &this->Internal->ColorFrame.RSImageData);
-
+    //RS::Image* imageColor = sample->color;
+    this->Internal->Image = sample->color;
+    RS::ImageData dataColor;
+    this->Internal->Image->AcquireAccess(RS::ImageAccess::ACCESS_READ, RS::PixelFormat::PIXEL_FORMAT_RGB, &dataColor);
+    
     PixelCodec::ConvertToBmp24(PixelCodec::ComponentOrder_RGB,
-      PixelCodec::PixelEncoding_BGR24,
-      this->Internal->ColorFormat.FrameSizePx[0],
-      this->Internal->ColorFormat.FrameSizePx[1],
-      this->Internal->ColorFrame.RSImageData.planes[0],
-      (unsigned char*)this->Internal->ColorFrame.PlusFrame.GetScalarPointer());
+      PixelCodec::PixelEncoding_RGB24,
+      this->Internal->ColorStream->FrameSizePx[0],
+      this->Internal->ColorStream->FrameSizePx[1],
+      dataColor.planes[0],
+      (unsigned char*)this->Internal->ColorStream->PlusFrame.GetScalarPointer());
+      
+    this->Internal->ColorStream->PlusSource->AddItem(&this->Internal->ColorStream->PlusFrame,
+      this->FrameNumber, unfilteredTimestamp);
 
-    this->Internal->ColorFrame.aSource->AddItem(&this->Internal->ColorFrame.PlusFrame,
-      (long)this->FrameNumber, unfilteredTimestamp);
+    this->Internal->Image->ReleaseAccess(&dataColor);
   }
-
-  // update depth frame and add to buffer
+  
+  // If wanted, update depth frame and add to buffer
   if (this->Internal->OutputVideoType == OPTICAL_AND_DEPTH)
   {
+    this->Internal->Image = sample->depth;
+    RS::ImageData dataDepth;
+    this->Internal->Image->AcquireAccess(RS::ImageAccess::ACCESS_READ, RS::PixelFormat::PIXEL_FORMAT_DEPTH, &dataDepth);
+
+    this->Internal->Projection = this->Internal->Device->CreateProjection();
+
+    this->Internal->Projection->QueryVertices(this->Internal->Image, this->Internal->depthMap);
+
+    int numDepthPixels = this->Internal->DepthStream->FrameSizePx[0] * this->Internal->DepthStream->FrameSizePx[1];
+    vtkIdType numPoints = numDepthPixels;
+    vtkSmartPointer<vtkPoints> points = vtkSmartPointer<vtkPoints>::New();
+    points->SetNumberOfPoints(numPoints);
+    vtkSmartPointer<vtkCellArray> vertices = vtkSmartPointer<vtkCellArray>::New();
+    vtkIdType pid[1];
+    for (int i = 0; i < numDepthPixels; i++)
+    {
+      if (this->Internal->depthMap[i].z > 0)
+      {
+        pid[0] = i;
+        points->SetPoint(pid[0], this->Internal->depthMap[i].x, this->Internal->depthMap[i].y, this->Internal->depthMap[i].z);
+        vertices->InsertNextCell(1, pid); // is there a faster way to do this?
+      }
+    }
+
+    vtkSmartPointer<vtkPolyData> polydata = vtkSmartPointer<vtkPolyData>::New();
+    polydata->SetPoints(points);
+    polydata->SetVerts(vertices);
+    
+    this->Internal->Projection->Release();
+    this->Internal->Image->ReleaseAccess(&dataDepth);
   }
-
-
+  
   this->Modified();
   this->FrameNumber++;
   LOG_INFO("FRAME: " << this->FrameNumber);
-
   this->Internal->SenseManager->ReleaseFrame();
-
-  return PLUS_SUCCESS;
-}
-
-//----------------------------------------------------------------------------
-//TODO: Why is there a mutex lock here?
-PlusStatus vtkPlusIntelRealSenseVideoSource::GetImage(vtkImageData* leftImage, vtkImageData* rightImage)
-{
-  PlusLockGuard<vtkPlusRecursiveCriticalSection> updateMutexGuardedLock(this->UpdateMutex);
   return PLUS_SUCCESS;
 }
 
@@ -193,9 +224,6 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::GetImage(vtkImageData* leftImage, v
 PlusStatus vtkPlusIntelRealSenseVideoSource::ReadConfiguration( vtkXMLDataElement* rootConfigElement )
 {
   XML_FIND_DEVICE_ELEMENT_REQUIRED_FOR_READING(deviceConfig, rootConfigElement);
-  XML_READ_CSTRING_ATTRIBUTE_OPTIONAL(CameraCalibrationFile, deviceConfig);
-  XML_READ_CSTRING_ATTRIBUTE_OPTIONAL(DeviceName, deviceConfig);
-
   XML_FIND_NESTED_ELEMENT_REQUIRED(dataSourcesElement, deviceConfig, "DataSources");
 
   // set OutputVideoType based on number of DataSource elements
@@ -241,80 +269,77 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::ReadConfiguration( vtkXMLDataElemen
       LOG_ERROR("Frame size must be provided");
       continue;
     }
-    if (STRCASECMP(videoId, "Optical")==0)
+    if (STRCASECMP(videoId, "Optical") == 0)
     {
       // this is the optical stream
       // check and set width/height parameters
       if (frameSizePxTemp[0] > 0 && frameSizePxTemp[0] <= SR300_MAX_OPTICAL_WIDTH)
       {
-        this->Internal->ColorFormat.FrameSizePx[0] = frameSizePxTemp[0];
+        this->Internal->ColorStream->FrameSizePx[0] = frameSizePxTemp[0];
       }
       else
       {
         LOG_WARNING("Optical frame width exceeds camera maximum of " << SR300_MAX_OPTICAL_WIDTH
           << ". Using default of "
           << SR300_DEFAULT_OPTICAL_WIDTH)
-        this->Internal->ColorFormat.FrameSizePx[0] = SR300_DEFAULT_OPTICAL_WIDTH;
+          this->Internal->ColorStream->FrameSizePx[0] = SR300_DEFAULT_OPTICAL_WIDTH;
       }
       if (frameSizePxTemp[1] > 0 && frameSizePxTemp[1] <= SR300_MAX_OPTICAL_HEIGHT)
       {
-        this->Internal->ColorFormat.FrameSizePx[1] = frameSizePxTemp[1];
+        this->Internal->ColorStream->FrameSizePx[1] = frameSizePxTemp[1];
       }
       else
       {
         LOG_WARNING("Optical frame height exceeds camera maximum of " << SR300_MAX_OPTICAL_HEIGHT
           << ". Using default of "
           << SR300_DEFAULT_OPTICAL_HEIGHT)
-        this->Internal->ColorFormat.FrameSizePx[1] = SR300_DEFAULT_OPTICAL_HEIGHT;
+          this->Internal->ColorStream->FrameSizePx[1] = SR300_DEFAULT_OPTICAL_HEIGHT;
       }
       // set RS PixelFormat
-      this->Internal->ColorFormat.RSPixelFormat = RS::PixelFormat::PIXEL_FORMAT_RGB24;
+      this->Internal->ColorStream->RSPixelFormat = RS::PixelFormat::PIXEL_FORMAT_RGB24;
       // log to user
-      LOG_INFO("Using Optical Frame Size: " << this->Internal->ColorFormat.FrameSizePx[0]
+      LOG_INFO("Using Optical Frame Size: " << this->Internal->ColorStream->FrameSizePx[0]
         << "x"
-        << this->Internal->ColorFormat.FrameSizePx[1]);
+        << this->Internal->ColorStream->FrameSizePx[1]);
     }
-    else if (STRCASECMP(videoId, "Depth")==0)
+    else if (STRCASECMP(videoId, "Depth") == 0)
     {
       // this is the depth stream
       // check and set width/height parameters
       if (frameSizePxTemp[0] > 0 && frameSizePxTemp[0] <= SR300_MAX_DEPTH_WIDTH)
       {
-        this->Internal->DepthFormat.FrameSizePx[0] = frameSizePxTemp[0];
+        this->Internal->DepthStream->FrameSizePx[0] = frameSizePxTemp[0];
       }
       else
       {
         LOG_WARNING("Depth frame width exceeds camera maximum of " << SR300_MAX_DEPTH_WIDTH
           << ". Using default of "
           << SR300_DEFAULT_DEPTH_WIDTH)
-          this->Internal->DepthFormat.FrameSizePx[0] = SR300_DEFAULT_DEPTH_WIDTH;
+          this->Internal->DepthStream->FrameSizePx[0] = SR300_DEFAULT_DEPTH_WIDTH;
       }
       if (frameSizePxTemp[1] > 0 && frameSizePxTemp[1] <= SR300_MAX_DEPTH_HEIGHT)
       {
-        this->Internal->DepthFormat.FrameSizePx[1] = frameSizePxTemp[1];
+        this->Internal->DepthStream->FrameSizePx[1] = frameSizePxTemp[1];
       }
       else
       {
         LOG_WARNING("Depth frame width exceeds camera maximum of " << SR300_MAX_DEPTH_HEIGHT
           << ". Using default of "
           << SR300_DEFAULT_DEPTH_HEIGHT)
-          this->Internal->DepthFormat.FrameSizePx[1] = SR300_DEFAULT_DEPTH_HEIGHT;
+          this->Internal->DepthStream->FrameSizePx[1] = SR300_DEFAULT_DEPTH_HEIGHT;
       }
       // set RS PixelFormat
-      this->Internal->DepthFormat.RSPixelFormat = RS::PixelFormat::PIXEL_FORMAT_DEPTH;
+      this->Internal->DepthStream->RSPixelFormat = RS::PixelFormat::PIXEL_FORMAT_DEPTH_F32;
       // log to user
-      LOG_INFO("Using Depth Frame Size: " << this->Internal->DepthFormat.FrameSizePx[0]
+      LOG_INFO("Using Depth Frame Size: " << this->Internal->DepthStream->FrameSizePx[0]
         << "x"
-        << this->Internal->DepthFormat.FrameSizePx[1]);
+        << this->Internal->DepthStream->FrameSizePx[1]);
     }
     else
     {
       LOG_ERROR("Unrecognized video data source ID, must be 'Optical' or 'Depth'");
       continue;
     }
-
-
-    
   }
 
   return PLUS_SUCCESS;
@@ -325,6 +350,8 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::WriteConfiguration(vtkXMLDataElemen
 {
   XML_FIND_DEVICE_ELEMENT_REQUIRED_FOR_WRITING(trackerConfig, rootConfigElement);
 
+  // TODO: Populate this
+
   return PLUS_SUCCESS;
 } 
 
@@ -332,7 +359,6 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::WriteConfiguration(vtkXMLDataElemen
 PlusStatus vtkPlusIntelRealSenseVideoSource::InternalConnect()
 { 
   this->Internal->Session = RS::Session::CreateInstance();
-  
   if (!this->Internal->Session)
   {
     LOG_ERROR("Failed to create a RealSense SDK Session");
@@ -347,50 +373,52 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalConnect()
   }
   
   // enable streams based on OPTICAL / OPTICAL_AND_DEPTH
-
-  RS::SampleReader* SampleRdr;
-  SampleRdr = RS::SampleReader::Activate(this->Internal->SenseManager);
-
-  // configure RS video streams
   if (this->Internal->OutputVideoType == OPTICAL || this->Internal->OutputVideoType == OPTICAL_AND_DEPTH)
   {
     // configure RS optical stream
-    SampleRdr->EnableStream(RS::StreamType::STREAM_TYPE_COLOR,
-      this->Internal->ColorFormat.FrameSizePx[0],
-      this->Internal->ColorFormat.FrameSizePx[1],
+    this->Internal->SenseManager->EnableStream( RS::StreamType::STREAM_TYPE_COLOR,
+      this->Internal->ColorStream->FrameSizePx[0],
+      this->Internal->ColorStream->FrameSizePx[1],
       DEFAULT_FRAME_RATE);
 
     // configure optical buffer
-    if (this->GetVideoSource("Optical", this->Internal->ColorFrame.aSource) != PLUS_SUCCESS)
+    if (this->GetVideoSource("Optical", this->Internal->ColorStream->PlusSource) != PLUS_SUCCESS)
     {
       LOG_ERROR("Unable to retrieve the OPTICAL video source in the Intel RealSense Video device.");
       return PLUS_FAIL;
     }
-    this->Internal->ColorFrame.aSource->SetPixelType(VTK_UNSIGNED_CHAR);
-    this->Internal->ColorFrame.aSource->SetImageType(US_IMG_RGB_COLOR);
-    this->Internal->ColorFrame.aSource->SetNumberOfScalarComponents(3);
-    this->Internal->ColorFrame.aSource->SetInputFrameSize(this->Internal->ColorFormat.FrameSizePx);
+    this->Internal->ColorStream->PlusSource->SetPixelType(VTK_UNSIGNED_CHAR);
+    this->Internal->ColorStream->PlusSource->SetImageType(US_IMG_RGB_COLOR);
+    this->Internal->ColorStream->PlusSource->SetNumberOfScalarComponents(3);
+    this->Internal->ColorStream->PlusSource->SetInputFrameSize(this->Internal->ColorStream->FrameSizePx);
 
     // configure optical frame
-    this->Internal->ColorFrame.PlusFrame.SetImageType(this->Internal->ColorFrame.aSource->GetImageType());
-    this->Internal->ColorFrame.PlusFrame.SetImageOrientation(this->Internal->ColorFrame.aSource->GetInputImageOrientation());
-    this->Internal->ColorFrame.PlusFrame.SetImageType(US_IMAGE_TYPE::US_IMG_RGB_COLOR);
-    this->Internal->ColorFrame.PlusFrame.AllocateFrame(this->Internal->ColorFormat.FrameSizePx, VTK_UNSIGNED_CHAR, 3); 
+    this->Internal->ColorStream->PlusFrame.SetImageType(this->Internal->ColorStream->PlusSource->GetImageType());
+    this->Internal->ColorStream->PlusFrame.SetImageOrientation(this->Internal->ColorStream->PlusSource->GetInputImageOrientation());
+    this->Internal->ColorStream->PlusFrame.SetImageType(US_IMAGE_TYPE::US_IMG_RGB_COLOR);
+    this->Internal->ColorStream->PlusFrame.AllocateFrame(this->Internal->ColorStream->FrameSizePx, VTK_UNSIGNED_CHAR, 3);
   }
 
   if (this->Internal->OutputVideoType == OPTICAL_AND_DEPTH)
   {
-    SampleRdr->EnableStream(RS::StreamType::STREAM_TYPE_DEPTH,
-      this->Internal->DepthFormat.FrameSizePx[0],
-      this->Internal->DepthFormat.FrameSizePx[1],
+    this->Internal->SenseManager->EnableStream(RS::StreamType::STREAM_TYPE_DEPTH,
+      this->Internal->DepthStream->FrameSizePx[0],
+      this->Internal->DepthStream->FrameSizePx[1],
       DEFAULT_FRAME_RATE);
 
-    // configure depth stream buffer
+    // configure depth stream buffer (vtkPolyData)
 
-    //configure depth frame
+    //configure depth frame (Intel RealSense params)
+
   }
   
   this->Internal->SenseManager->Init();
+
+  this->Internal->CaptureManager = this->Internal->SenseManager->QueryCaptureManager();
+  this->Internal->Device = this->Internal->CaptureManager->QueryDevice();
+  cout << "Depth range: " << this->Internal->Device->QueryDepthSensorRange().min << " to " << this->Internal->Device->QueryDepthSensorRange().max;
+  int numDepthPixels = this->Internal->DepthStream->FrameSizePx[0] * this->Internal->DepthStream->FrameSizePx[1];
+  this->Internal->depthMap = new RS::Point3DF32[numDepthPixels];
 
   return PLUS_SUCCESS;
 }
@@ -400,6 +428,6 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalDisconnect()
 { 
   this->Internal->SenseManager->Close();
   this->Internal->SenseManager->Release();
-  this->IsTrackingInitialized=false;
+  cout << "disconnected" << endl;
   return PLUS_SUCCESS;
 }
