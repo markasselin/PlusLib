@@ -574,6 +574,11 @@ PlusStatus vtkPlusDataSource::AddItem(void* imageDataPtr, US_IMAGE_ORIENTATION u
                                     this->ClipRectangleOrigin, this->ClipRectangleSize, unfilteredTimestamp, filteredTimestamp, customFields);
 }
 
+PlusStatus vtkPlusDataSource::AddItem(vtkSmartPointer<vtkPolyData> polyDataPtr, long frameNumber, double unfilteredTimestamp/*=UNDEFINED_TIMESTAMP*/, double filteredTimestamp/*=UNDEFINED_TIMESTAMP*/)
+{
+  return this->GetBuffer()->AddItem(polyDataPtr, frameNumber, unfilteredTimestamp, filteredTimestamp);
+}
+
 //-----------------------------------------------------------------------------
 US_IMAGE_TYPE vtkPlusDataSource::GetImageType()
 {

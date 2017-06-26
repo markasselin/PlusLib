@@ -135,7 +135,17 @@ public:
   PlusStatus DeepCopy( StreamBufferItem* dataItem );
 
   PlusVideoFrame& GetFrame() { return this->Frame; };
+
+  /*!
+  Return pointer to vtkPolyData in this buffer item.
+  TEMPORARY_ONLY
+  */
   vtkPolyData* GetPolyData() { return this->PolyData; };
+  /*!
+  Set this items vtkPolyData.
+  TEMPORARY_ONLY
+  */
+  void SetPolyData(vtkSmartPointer<vtkPolyData> polyDataPtr);
 
   /*! Set tracker matrix */
   PlusStatus SetMatrix( vtkMatrix4x4* matrix );
@@ -154,6 +164,7 @@ public:
   {
     return Frame.IsImageValid();
   }
+  bool HasValidPolyData() const;
 
 protected:
   double FilteredTimeStamp;

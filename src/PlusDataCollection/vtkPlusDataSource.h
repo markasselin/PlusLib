@@ -237,6 +237,12 @@ public:
   virtual PlusStatus AddItem(const PlusTrackedFrame::FieldMapType& customFields, long frameNumber, double unfilteredTimestamp = UNDEFINED_TIMESTAMP, double filteredTimestamp = UNDEFINED_TIMESTAMP);
 
   /*!
+    Add vtkPolyData to the buffer.
+    TEMPORARY_ONLY
+  */
+  virtual PlusStatus AddItem(vtkSmartPointer<vtkPolyData> polyDataPtr, long frameNumber, double unfilteredTimestamp = UNDEFINED_TIMESTAMP, double filteredTimestamp = UNDEFINED_TIMESTAMP);
+
+  /*!
   Add a matrix plus status to the list, with an exactly known timestamp value (e.g., provided by a high-precision hardware timer).
   If the timestamp is less than or equal to the previous timestamp, then nothing  will be done.
   If filteredTiemstamp argument is undefined then the filtered timestamp will be computed from the input unfiltered timestamp.

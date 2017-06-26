@@ -321,11 +321,11 @@ PlusStatus vtkPlusOpticalMarkerTracker::vtkInternal::BuildTransformMatrix(vtkSma
 //----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
 {
-  if (this->InputChannels.size() != 1)
+  /*if (this->InputChannels.size() != 1)
   {
     LOG_ERROR("ImageProcessor device requires exactly 1 input stream (that contains video data). Check configuration.");
     return PLUS_FAIL;
-  }
+  }*/
 
   // Get image to tracker transform from the tracker (only request 1 frame, the latest)
   if (!this->InputChannels[0]->GetVideoDataAvailable())
@@ -352,6 +352,11 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     this->LastProcessedInputDataTimestamp = vtkPlusAccurateTimer::GetSystemTime(); // forget about the past, try to add frames that are acquired from now on
     return PLUS_FAIL;
   }
+
+  // get polydata from buffers
+  StreamBufferitem item;
+  this->InputChannels[1]->
+
 
   LOG_TRACE("Image to be processed: timestamp=" << trackedFrame.GetTimestamp());
 

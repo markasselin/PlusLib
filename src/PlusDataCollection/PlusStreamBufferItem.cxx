@@ -121,7 +121,23 @@ ToolStatus StreamBufferItem::GetStatus() const
 }
 
 //----------------------------------------------------------------------------
+void StreamBufferItem::SetPolyData(vtkSmartPointer<vtkPolyData> polyDataPtr)
+{
+  this->PolyData = polyDataPtr;
+  LOG_INFO("Poly data set in theory");
+}
+
+//----------------------------------------------------------------------------
 bool StreamBufferItem::HasValidFieldData() const
 {
   return this->CustomFrameFields.size() > 0;
+}
+
+bool StreamBufferItem::HasValidPolyData() const
+{
+  if (this->PolyData != NULL)
+  {
+    return true;
+  }
+  return false;
 }

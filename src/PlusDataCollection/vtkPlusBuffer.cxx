@@ -472,6 +472,66 @@ PlusStatus vtkPlusBuffer::AddItem(void* imageDataPtr,
   return PLUS_SUCCESS;
 }
 
+PlusStatus vtkPlusBuffer::AddItem(vtkSmartPointer<vtkPolyData> polyDataPtr, long frameNumber, double unfilteredTimestamp/*=UNDEFINED_TIMESTAMP*/, double filteredTimestamp/*=UNDEFINED_TIMESTAMP*/)
+{
+  if (unfilteredTimestamp == UNDEFINED_TIMESTAMP)
+  {
+    unfilteredTimestamp = vtkPlusAccurateTimer::GetSystemTime();
+  }
+
+  if (filteredTimestamp == UNDEFINED_TIMESTAMP)
+  {
+    bool filteredTimestampProbablyValid = true;
+    if (this->StreamBuffer->CreateFilteredTimeStampForItem(frameNumber, unfilteredTimestamp, filteredTimestamp, filteredTimestampProbablyValid) != PLUS_SUCCESS)
+    {
+      LOCAL_LOG_WARNING("Failed to create filtered timestamp for video buffer item with item index: " << frameNumber);
+      return PLUS_FAIL;
+    }
+    if (!filteredTimestampProbablyValid)
+    {
+      LOG_INFO("Filtered timestamp is probably invalid for video buffer item with item index=" << frameNumber << ", time=" <<
+        unfilteredTimestamp << ". The item may have been tagged with an inaccurate timestamp, therefore it will not be recorded.");
+      return PLUS_SUCCESS;
+    }
+  }
+  else
+  {
+    this->StreamBuffer->AddToTimeStampReport(frameNumber, unfilteredTimestamp, filteredTimestamp);
+  }
+
+  if (polyDataPtr == NULL)
+  {
+    LOG_ERROR("vtkPlusBuffer: Unable to add NULL frame to video buffer!");
+    return PLUS_FAIL;
+  }
+
+  int bufferIndex(0);
+  BufferItemUidType itemUid;
+  PlusLockGuard<StreamItemCircularBuffer> dataBufferGuardedLock(this->StreamBuffer);
+  if (this->StreamBuffer->PrepareForNewItem(filteredTimestamp, itemUid, bufferIndex) != PLUS_SUCCESS)
+  {
+    // Just a debug message, because we want to avoid unnecessary warning messages if the timestamp is the same as last one
+    LOCAL_LOG_DEBUG("vtkPlusBuffer: Failed to prepare for adding new frame to video buffer!");
+    return PLUS_FAIL;
+  }
+
+  // get the pointer to the correct location in the frame buffer, where this data needs to be copied
+  StreamBufferItem* newObjectInBuffer = this->StreamBuffer->GetBufferItemPointerFromBufferIndex(bufferIndex);
+  if (newObjectInBuffer == NULL)
+  {
+    LOCAL_LOG_ERROR("vtkPlusBuffer: Failed to get pointer to video buffer object from the video buffer for the new frame!");
+    return PLUS_FAIL;
+  }
+
+  newObjectInBuffer->SetPolyData(polyDataPtr);
+
+  newObjectInBuffer->SetFilteredTimestamp(filteredTimestamp);
+  newObjectInBuffer->SetUnfilteredTimestamp(unfilteredTimestamp);
+  newObjectInBuffer->SetIndex(frameNumber);
+  newObjectInBuffer->SetUid(itemUid);
+
+  return PlusStatus();
+}
 //----------------------------------------------------------------------------
 PlusStatus vtkPlusBuffer::AddTimeStampedItem(vtkMatrix4x4* matrix, ToolStatus status, unsigned long frameNumber, double unfilteredTimestamp, double filteredTimestamp/*=UNDEFINED_TIMESTAMP*/, const PlusTrackedFrame::FieldMapType* customFields /*= NULL*/)
 {

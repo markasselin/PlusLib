@@ -209,6 +209,8 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
     polydata->SetPoints(points);
     polydata->SetVerts(vertices);
     
+    this->Internal->DepthStream->PlusSource->AddItem(polydata, this->FrameNumber, unfilteredTimestamp);
+
     this->Internal->Projection->Release();
     this->Internal->Image->ReleaseAccess(&dataDepth);
   }
@@ -407,7 +409,7 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalConnect()
       DEFAULT_FRAME_RATE);
 
     // configure depth stream buffer (vtkPolyData)
-
+    if (this->GetVideoSource("Depth", this->Internal->DepthStream->PlusSource) != PLUS_SUCCESS);
     //configure depth frame (Intel RealSense params)
 
   }

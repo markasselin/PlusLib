@@ -133,6 +133,13 @@ public:
   */
   PlusStatus GetTrackedFrameList(double& aTimestampOfLastFrameAlreadyGot, vtkPlusTrackedFrameList* aTrackedFrameList, int aMaxNumberOfFramesToAdd);
 
+  /*!
+  Get vtkPolyData from the buffer.
+  TEMPORARY_ONLY
+  */
+  PlusStatus vtkPlusChannel::GetPolyData(double timestamp, vtkSmartPointer<vtkPolyData> polyData);
+  PlusStatus vtkPlusChannel::GetPolyData(vtkSmartPointer<vtkPolyData> polyData);
+
   /*! Get the closest tracked frame timestamp to the specified time */
   virtual double GetClosestTrackedFrameTimestampByTime(double time);
 
