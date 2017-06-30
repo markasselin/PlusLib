@@ -718,195 +718,196 @@ PlusStatus vtkPlusChannel::GetTrackedFrame(PlusTrackedFrame& trackedFrame)
 // EDIT THIS FOR POLYDATA
 //
 
-//----------------------------------------------------------------------------
-PlusStatus vtkPlusChannel::GetPolyData(double timestamp, vtkSmartPointer<vtkPolyData> polyData)
-{
-  int numberOfErrors(0);
-  double synchronizedTimestamp(0);
-
-  // Get frame UID
-  if (this->HasVideoSource() && enableImageData)
-  {
-    if (this->VideoSource->GetNumberOfItems() < 1)
-    {
-      LOG_ERROR("Couldn't get tracked frame from video source, frames are not available yet");
-      return PLUS_FAIL;
-    }
-    BufferItemUidType frameUID = 0;
-    ItemStatus status = this->VideoSource->GetItemUidFromTime(timestamp, frameUID);
-    if (status != ITEM_OK)
-    {
-      if (status == ITEM_NOT_AVAILABLE_ANYMORE)
-      {
-        LOG_ERROR("Couldn't get frame UID from time (" << std::fixed << timestamp <<
-          ") - item not available anymore!");
-      }
-      else if (status == ITEM_NOT_AVAILABLE_YET)
-      {
-        LOG_ERROR("Couldn't get frame UID from time (" << std::fixed << timestamp <<
-          ") - item not available yet!");
-      }
-      else
-      {
-        LOG_ERROR("Couldn't get frame UID from time (" << std::fixed << timestamp << ")!");
-      }
-
-      return PLUS_FAIL;
-    }
-
-    StreamBufferItem CurrentStreamBufferItem;
-    if (this->VideoSource->GetStreamBufferItem(frameUID, &CurrentStreamBufferItem) != ITEM_OK)
-    {
-      LOG_ERROR("Couldn't get video buffer item by frame UID: " << frameUID);
-      return PLUS_FAIL;
-    }
-
-    // Copy frame
-    PlusVideoFrame frame = CurrentStreamBufferItem.GetFrame();
-    aTrackedFrame.SetImageData(frame);
-
-    // Copy all custom fields
-    StreamBufferItem::FieldMapType fieldMap = CurrentStreamBufferItem.GetCustomFrameFieldMap();
-    StreamBufferItem::FieldMapType::iterator fieldIterator;
-    for (fieldIterator = fieldMap.begin(); fieldIterator != fieldMap.end(); fieldIterator++)
-    {
-      aTrackedFrame.SetCustomFrameField((*fieldIterator).first, (*fieldIterator).second);
-    }
-
-    synchronizedTimestamp = CurrentStreamBufferItem.GetTimestamp(this->VideoSource->GetLocalTimeOffsetSec());
-  }
-
-  if (synchronizedTimestamp == 0)
-  {
-    synchronizedTimestamp = timestamp;
-  }
-
-  // Add main tool timestamp
-  aTrackedFrame.SetTimestamp(synchronizedTimestamp);
-
-  for (DataSourceContainerConstIterator it = this->GetToolsStartIterator(); it != this->GetToolsEndIterator(); ++it)
-  {
-    vtkPlusDataSource* aTool = it->second;
-    PlusTransformName toolTransformName(aTool->GetId());
-    if (!toolTransformName.IsValid())
-    {
-      LOG_ERROR("Tool transform name is invalid!");
-      numberOfErrors++;
-      continue;
-    }
-
-    StreamBufferItem bufferItem;
-    ItemStatus result = aTool->GetStreamBufferItemFromTime(synchronizedTimestamp, &bufferItem, vtkPlusBuffer::INTERPOLATED);
-    if (result != ITEM_OK)
-    {
-      double latestTimestamp(0);
-      if (aTool->GetLatestTimeStamp(latestTimestamp) != ITEM_OK)
-      {
-        LOG_ERROR("Failed to get latest timestamp!");
-        numberOfErrors++;
-      }
-
-      double oldestTimestamp(0);
-      if (aTool->GetOldestTimeStamp(oldestTimestamp) != ITEM_OK)
-      {
-        LOG_ERROR("Failed to get oldest timestamp!");
-        numberOfErrors++;
-      }
-
-      LOG_ERROR(aTool->GetId() << ": Failed to get tracker item from buffer by time: " << std::fixed << synchronizedTimestamp << " (Latest timestamp: " << latestTimestamp << "   Oldest timestamp: " << oldestTimestamp << ").");
-      numberOfErrors++;
-      continue;
-    }
-
-    vtkSmartPointer<vtkMatrix4x4> dMatrix = vtkSmartPointer<vtkMatrix4x4>::New();
-    if (bufferItem.GetMatrix(dMatrix) != PLUS_SUCCESS)
-    {
-      LOG_ERROR("Failed to get matrix from buffer item for tool " << aTool->GetId());
-      numberOfErrors++;
-      continue;
-    }
-
-    if (aTrackedFrame.SetCustomFrameTransform(toolTransformName, dMatrix) != PLUS_SUCCESS)
-    {
-      LOG_ERROR("Failed to set transform for tool " << aTool->GetId());
-      numberOfErrors++;
-      continue;
-    }
-
-    if (aTrackedFrame.SetCustomFrameTransformStatus(toolTransformName, vtkPlusDevice::ConvertToolStatusToTrackedFrameFieldStatus(bufferItem.GetStatus())) != PLUS_SUCCESS)
-    {
-      LOG_ERROR("Failed to set transform status for tool " << aTool->GetId());
-      numberOfErrors++;
-      continue;
-    }
-
-    // Copy all custom fields
-    StreamBufferItem::FieldMapType fieldMap = bufferItem.GetCustomFrameFieldMap();
-    StreamBufferItem::FieldMapType::iterator fieldIterator;
-    for (fieldIterator = fieldMap.begin(); fieldIterator != fieldMap.end(); fieldIterator++)
-    {
-      aTrackedFrame.SetCustomFrameField((*fieldIterator).first, (*fieldIterator).second);
-    }
-
-    synchronizedTimestamp = bufferItem.GetTimestamp(aTool->GetLocalTimeOffsetSec());
-  }
-
-  for (DataSourceContainerConstIterator it = this->GetFieldDataSourcesStartIterator(); it != this->GetFieldDataSourcesEndIterator(); ++it)
-  {
-    vtkPlusDataSource* aSource = it->second;
-
-    StreamBufferItem bufferItem;
-    ItemStatus result = aSource->GetStreamBufferItemFromTime(synchronizedTimestamp, &bufferItem, vtkPlusBuffer::CLOSEST_TIME);
-    if (result != ITEM_OK)
-    {
-      double latestTimestamp(0);
-      if (aSource->GetLatestTimeStamp(latestTimestamp) != ITEM_OK)
-      {
-        LOG_ERROR("Failed to get latest timestamp!");
-        numberOfErrors++;
-      }
-
-      double oldestTimestamp(0);
-      if (aSource->GetOldestTimeStamp(oldestTimestamp) != ITEM_OK)
-      {
-        LOG_ERROR("Failed to get oldest timestamp!");
-        numberOfErrors++;
-      }
-
-      LOG_ERROR(aSource->GetId() << ": Failed to get tracker item from buffer by time: " << std::fixed << synchronizedTimestamp << " (Latest timestamp: " << latestTimestamp << "   Oldest timestamp: " << oldestTimestamp << ").");
-      numberOfErrors++;
-      continue;
-    }
-
-    // Copy all custom fields
-    StreamBufferItem::FieldMapType fieldMap = bufferItem.GetCustomFrameFieldMap();
-    StreamBufferItem::FieldMapType::iterator fieldIterator;
-    for (fieldIterator = fieldMap.begin(); fieldIterator != fieldMap.end(); fieldIterator++)
-    {
-      aTrackedFrame.SetCustomFrameField((*fieldIterator).first, (*fieldIterator).second);
-    }
-
-    synchronizedTimestamp = bufferItem.GetTimestamp(aSource->GetLocalTimeOffsetSec());
-  }
-
-  // Copy frame timestamp
-  aTrackedFrame.SetTimestamp(synchronizedTimestamp);
-
-  return (numberOfErrors == 0 ? PLUS_SUCCESS : PLUS_FAIL);
-}
 
 //----------------------------------------------------------------------------
-PlusStatus vtkPlusChannel::GetPolyData(vtkSmartPointer<vtkPolyData> polyData)
-{
-  double mostRecentFrameTimestamp(0);
-  if (this->GetMostRecentTimestamp(mostRecentFrameTimestamp) != PLUS_SUCCESS)
-  {
-    LOG_ERROR("Failed to get most recent timestamp from the buffer!");
-    return PLUS_FAIL;
-  }
-
-  return this->GetPolyData(mostRecentFrameTimestamp, polyData);
-}
+//PlusStatus vtkPlusChannel::GetPolyData(double timestamp, vtkSmartPointer<vtkPolyData> polyData)
+//{
+//  int numberOfErrors(0);
+//  double synchronizedTimestamp(0);
+//
+//  // Get frame UID
+//  if (this->HasVideoSource() && enableImageData)
+//  {
+//    if (this->VideoSource->GetNumberOfItems() < 1)
+//    {
+//      LOG_ERROR("Couldn't get tracked frame from video source, frames are not available yet");
+//      return PLUS_FAIL;
+//    }
+//    BufferItemUidType frameUID = 0;
+//    ItemStatus status = this->VideoSource->GetItemUidFromTime(timestamp, frameUID);
+//    if (status != ITEM_OK)
+//    {
+//      if (status == ITEM_NOT_AVAILABLE_ANYMORE)
+//      {
+//        LOG_ERROR("Couldn't get frame UID from time (" << std::fixed << timestamp <<
+//          ") - item not available anymore!");
+//      }
+//      else if (status == ITEM_NOT_AVAILABLE_YET)
+//      {
+//        LOG_ERROR("Couldn't get frame UID from time (" << std::fixed << timestamp <<
+//          ") - item not available yet!");
+//      }
+//      else
+//      {
+//        LOG_ERROR("Couldn't get frame UID from time (" << std::fixed << timestamp << ")!");
+//      }
+//
+//      return PLUS_FAIL;
+//    }
+//
+//    StreamBufferItem CurrentStreamBufferItem;
+//    if (this->VideoSource->GetStreamBufferItem(frameUID, &CurrentStreamBufferItem) != ITEM_OK)
+//    {
+//      LOG_ERROR("Couldn't get video buffer item by frame UID: " << frameUID);
+//      return PLUS_FAIL;
+//    }
+//
+//    // Copy frame
+//    PlusVideoFrame frame = CurrentStreamBufferItem.GetFrame();
+//    aTrackedFrame.SetImageData(frame);
+//
+//    // Copy all custom fields
+//    StreamBufferItem::FieldMapType fieldMap = CurrentStreamBufferItem.GetCustomFrameFieldMap();
+//    StreamBufferItem::FieldMapType::iterator fieldIterator;
+//    for (fieldIterator = fieldMap.begin(); fieldIterator != fieldMap.end(); fieldIterator++)
+//    {
+//      aTrackedFrame.SetCustomFrameField((*fieldIterator).first, (*fieldIterator).second);
+//    }
+//
+//    synchronizedTimestamp = CurrentStreamBufferItem.GetTimestamp(this->VideoSource->GetLocalTimeOffsetSec());
+//  }
+//
+//  if (synchronizedTimestamp == 0)
+//  {
+//    synchronizedTimestamp = timestamp;
+//  }
+//
+//  // Add main tool timestamp
+//  aTrackedFrame.SetTimestamp(synchronizedTimestamp);
+//
+//  for (DataSourceContainerConstIterator it = this->GetToolsStartIterator(); it != this->GetToolsEndIterator(); ++it)
+//  {
+//    vtkPlusDataSource* aTool = it->second;
+//    PlusTransformName toolTransformName(aTool->GetId());
+//    if (!toolTransformName.IsValid())
+//    {
+//      LOG_ERROR("Tool transform name is invalid!");
+//      numberOfErrors++;
+//      continue;
+//    }
+//
+//    StreamBufferItem bufferItem;
+//    ItemStatus result = aTool->GetStreamBufferItemFromTime(synchronizedTimestamp, &bufferItem, vtkPlusBuffer::INTERPOLATED);
+//    if (result != ITEM_OK)
+//    {
+//      double latestTimestamp(0);
+//      if (aTool->GetLatestTimeStamp(latestTimestamp) != ITEM_OK)
+//      {
+//        LOG_ERROR("Failed to get latest timestamp!");
+//        numberOfErrors++;
+//      }
+//
+//      double oldestTimestamp(0);
+//      if (aTool->GetOldestTimeStamp(oldestTimestamp) != ITEM_OK)
+//      {
+//        LOG_ERROR("Failed to get oldest timestamp!");
+//        numberOfErrors++;
+//      }
+//
+//      LOG_ERROR(aTool->GetId() << ": Failed to get tracker item from buffer by time: " << std::fixed << synchronizedTimestamp << " (Latest timestamp: " << latestTimestamp << "   Oldest timestamp: " << oldestTimestamp << ").");
+//      numberOfErrors++;
+//      continue;
+//    }
+//
+//    vtkSmartPointer<vtkMatrix4x4> dMatrix = vtkSmartPointer<vtkMatrix4x4>::New();
+//    if (bufferItem.GetMatrix(dMatrix) != PLUS_SUCCESS)
+//    {
+//      LOG_ERROR("Failed to get matrix from buffer item for tool " << aTool->GetId());
+//      numberOfErrors++;
+//      continue;
+//    }
+//
+//    if (aTrackedFrame.SetCustomFrameTransform(toolTransformName, dMatrix) != PLUS_SUCCESS)
+//    {
+//      LOG_ERROR("Failed to set transform for tool " << aTool->GetId());
+//      numberOfErrors++;
+//      continue;
+//    }
+//
+//    if (aTrackedFrame.SetCustomFrameTransformStatus(toolTransformName, vtkPlusDevice::ConvertToolStatusToTrackedFrameFieldStatus(bufferItem.GetStatus())) != PLUS_SUCCESS)
+//    {
+//      LOG_ERROR("Failed to set transform status for tool " << aTool->GetId());
+//      numberOfErrors++;
+//      continue;
+//    }
+//
+//    // Copy all custom fields
+//    StreamBufferItem::FieldMapType fieldMap = bufferItem.GetCustomFrameFieldMap();
+//    StreamBufferItem::FieldMapType::iterator fieldIterator;
+//    for (fieldIterator = fieldMap.begin(); fieldIterator != fieldMap.end(); fieldIterator++)
+//    {
+//      aTrackedFrame.SetCustomFrameField((*fieldIterator).first, (*fieldIterator).second);
+//    }
+//
+//    synchronizedTimestamp = bufferItem.GetTimestamp(aTool->GetLocalTimeOffsetSec());
+//  }
+//
+//  for (DataSourceContainerConstIterator it = this->GetFieldDataSourcesStartIterator(); it != this->GetFieldDataSourcesEndIterator(); ++it)
+//  {
+//    vtkPlusDataSource* aSource = it->second;
+//
+//    StreamBufferItem bufferItem;
+//    ItemStatus result = aSource->GetStreamBufferItemFromTime(synchronizedTimestamp, &bufferItem, vtkPlusBuffer::CLOSEST_TIME);
+//    if (result != ITEM_OK)
+//    {
+//      double latestTimestamp(0);
+//      if (aSource->GetLatestTimeStamp(latestTimestamp) != ITEM_OK)
+//      {
+//        LOG_ERROR("Failed to get latest timestamp!");
+//        numberOfErrors++;
+//      }
+//
+//      double oldestTimestamp(0);
+//      if (aSource->GetOldestTimeStamp(oldestTimestamp) != ITEM_OK)
+//      {
+//        LOG_ERROR("Failed to get oldest timestamp!");
+//        numberOfErrors++;
+//      }
+//
+//      LOG_ERROR(aSource->GetId() << ": Failed to get tracker item from buffer by time: " << std::fixed << synchronizedTimestamp << " (Latest timestamp: " << latestTimestamp << "   Oldest timestamp: " << oldestTimestamp << ").");
+//      numberOfErrors++;
+//      continue;
+//    }
+//
+//    // Copy all custom fields
+//    StreamBufferItem::FieldMapType fieldMap = bufferItem.GetCustomFrameFieldMap();
+//    StreamBufferItem::FieldMapType::iterator fieldIterator;
+//    for (fieldIterator = fieldMap.begin(); fieldIterator != fieldMap.end(); fieldIterator++)
+//    {
+//      aTrackedFrame.SetCustomFrameField((*fieldIterator).first, (*fieldIterator).second);
+//    }
+//
+//    synchronizedTimestamp = bufferItem.GetTimestamp(aSource->GetLocalTimeOffsetSec());
+//  }
+//
+//  // Copy frame timestamp
+//  aTrackedFrame.SetTimestamp(synchronizedTimestamp);
+//
+//  return (numberOfErrors == 0 ? PLUS_SUCCESS : PLUS_FAIL);
+//}
+//
+////----------------------------------------------------------------------------
+//PlusStatus vtkPlusChannel::GetPolyData(vtkSmartPointer<vtkPolyData> polyData)
+//{
+//  double mostRecentFrameTimestamp(0);
+//  if (this->GetMostRecentTimestamp(mostRecentFrameTimestamp) != PLUS_SUCCESS)
+//  {
+//    LOG_ERROR("Failed to get most recent timestamp from the buffer!");
+//    return PLUS_FAIL;
+//  }
+//
+//  return this->GetPolyData(mostRecentFrameTimestamp, polyData);
+//}
 
 
 //----------------------------------------------------------------------------

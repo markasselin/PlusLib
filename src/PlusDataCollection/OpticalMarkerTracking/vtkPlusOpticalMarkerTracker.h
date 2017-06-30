@@ -1,15 +1,23 @@
 /*=Plus=header=begin======================================================
-Program: Plus
-Copyright (c) Laboratory for Percutaneous Surgery. All rights reserved.
-See License.txt for details.
+  Progra  : Plus
+  Copyright (c) Laboratory for Percutaneous Surgery. All rights reserved.
+  See License.txt for details.
 =========================================================Plus=header=end*/
 
 #ifndef __vtkPlusOpticalMarkerTracker_h
 #define __vtkPlusOpticalMarkerTracker_h
 
-// Local includes
 #include "vtkPlusDataCollectionExport.h"
 #include "vtkPlusDevice.h"
+
+// aruco headers
+// TODO: move these to cxx files (use PIMPL - vtkInternal - if needed)
+#include "markerdetector.h"
+#include "cameraparameters.h"
+#include "posetracker.h"
+
+class vtkPlusDataSource;
+class vtkMatrix4x4;
 
 /*!
   \class vtkPlusOpticalMarkerTracker
@@ -22,12 +30,12 @@ public:
   /*! Defines whether or not depth stream is used. */
   enum TRACKING_METHOD
   {
-    TRACKING_OPTICAL,
-    TRACKING_OPTICAL_AND_DEPTH
+    OPTICAL,
+    OPTICAL_AND_DEPTH
   };
 
-  static vtkPlusOpticalMarkerTracker* New();
-  vtkTypeMacro(vtkPlusOpticalMarkerTracker, vtkPlusDevice);
+  static vtkPlusOpticalMarkerTracker *New();
+  vtkTypeMacro(vtkPlusOpticalMarkerTracker,vtkPlusDevice);
   virtual void PrintSelf(ostream& os, vtkIndent indent) VTK_OVERRIDE;
 
   /*! Read main config settings from XML. */
@@ -46,7 +54,8 @@ public:
   PlusStatus InternalDisconnect();
 
   /*!
-  Get an update from the tracking system and push the new transforms to the tools.
+  Get an update from the tracking system and push the new transforms
+  to the tools.  This should only be used within vtkTracker.cxx.
   */
   virtual PlusStatus InternalUpdate();
 
@@ -54,11 +63,26 @@ public:
   virtual bool IsTracker() const { return true; }
   virtual bool IsVirtual() const { return true; }
 
+  /*!
+    Get image from the camera into VTK images. If an input arguments is NULL then that image is not retrieved.
+  */
+  PlusStatus GetImage(vtkImageData* leftImage, vtkImageData* rightImage);
+
+  vtkGetMacro(TrackingMethod, TRACKING_METHOD);
+  vtkGetMacro(CameraCalibrationFile, std::string);
+  vtkGetMacro(MarkerDictionary, std::string);
 protected:
+  /*! Constructor */
   vtkPlusOpticalMarkerTracker();
+
+  /*! Destructor */
   ~vtkPlusOpticalMarkerTracker();
 
-  /*! Start the tracking system. */
+  vtkSetMacro(TrackingMethod, TRACKING_METHOD);
+  vtkSetMacro(CameraCalibrationFile, std::string);
+  vtkSetMacro(MarkerDictionary, std::string);
+
+  /*! */
   PlusStatus InternalStartRecording();
 
   /*! Stop the tracking system and bring it back to its initial state. */
@@ -73,6 +97,147 @@ protected:
 private:
   vtkPlusOpticalMarkerTracker(const vtkPlusOpticalMarkerTracker&);
   void operator=(const vtkPlusOpticalMarkerTracker&);
+
+  /*!  */
+  class TrackedTool
+  {
+  public:
+    TrackedTool(int MarkerId, float MarkerSizeMm, std::string ToolSourceId);
+    TrackedTool(std::string MarkerMapFile, string ToolSourceId);
+    enum TOOL_MARKER_TYPE
+    {
+      SINGLE_MARKER,
+      MARKER_MAP
+    };
+    int MarkerId;
+    TOOL_MARKER_TYPE ToolMarkerType;
+    float MarkerSizeMm;
+    std::string MarkerMapFile;
+    std::string ToolSourceId;
+    std::string ToolName;
+    aruco::MarkerPoseTracker MarkerPoseTracker;
+    vtkSmartPointer<vtkMatrix4x4> transformMatrix = vtkSmartPointer<vtkMatrix4x4>::New();
+  };
+
+  // TODO: add error checking
+  void BuildTransformMatrix(vtkSmartPointer<vtkMatrix4x4> transformMatrix, cv::Mat Rvec, cv::Mat Tvec);
+
+ 
+
+  /*!  */
+  std::string CameraCalibrationFile;
+
+  /*!  */
+  TRACKING_METHOD TrackingMethod;
+
+  /*!  */
+  std::string MarkerDictionary;
+
+  /*!  */
+  std::vector<TrackedTool> Tools;
+
+  /*! Pointer to main aruco objects */
+  aruco::MarkerDetector MDetector;
+  aruco::CameraParameters CP;
+  vector<aruco::Marker> markers;
+
+  private:
+  enum MARKER_ORIENTATION
+  {
+    //ALIGNED, //marker sides are parallel to image frame
+    SKEW_LEFT, //skewed back towards left of image (low x values)
+    SKEW_RIGHT, //skewed back towards right of image (high x values)
+    ROTATED //marker has unique top, right, bottom and left corners
+  };
+
+  private:
+  /*
+   * Determines if the marker is ALIGNED, SKEW_LEFT, SKEW_RIGHT or ROTATED
+   * with respect to the image frame.  If marker is SKEW_LEFT, SKEW_RIGHT
+   * or ROTATED sets the corner on the top of the image to be at index 0
+   * and places the remaining corners in clockwise order in index 1 to 3.
+   */
+  MARKER_ORIENTATION DetermineMarkerOrientation(std::vector<cv::Point2d>& corners);
+
+  /*
+  *
+  */
+  void CopyToItkData(int top, int bottom, int *leftBoundary, int *rightBoundary);
+
+  /*
+   * Computes the slope of the line x=my+b between corners 1 & 2.
+   * If corenrs have the same x or y values then returns special value 0.0.
+   */
+  float DetermineSlope(cv::Point2d corner1, cv::Point2d corner2);
+
+  /*
+   *
+   */
+  void GenerateBoundary(int* boundary, std::vector<cv::Point2d> corners, int top, int bottom, bool isRight);
+
+  // /*
+  // *
+  // */
+  //void GenerateAlignedItkData(
+  //  vtkSmartPointer<vtkPolyData> vtkDepthData,
+  //  std::vector<itk::Point<double, 3>> &itkData,
+  //  std::vector<cv::Point2d> corners,
+  //  /*for testing*/
+  //  int dim[],
+  //  cv::Mat image
+  //);
+
+  /*
+   *
+   */
+  void GenerateSkewLeftItkData(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<itk::Point<double, 3>> &itkData,
+    std::vector<cv::Point2d> corners
+    /*for testing
+    unsigned int dim[],
+    cv::Mat image*/
+  );
+
+  /*
+   *
+   */
+  void GenerateSkewRightItkData(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<itk::Point<double, 3>> &itkData,
+    std::vector<cv::Point2d> corners
+    /*for testing
+    unsigned int dim[],
+    cv::Mat image*/
+  );
+
+  /*
+   *
+   */
+  void GenerateRotatedItkData(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<itk::Point<double, 3>> &itkData,
+    std::vector<cv::Point2d> corners
+    /*for testing
+    unsigned int dim[],
+    cv::Mat image*/
+  );
+
+  /*
+  *
+  */
+  void GenerateItkData(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<itk::Point<double, 3>> &itkData,
+    std::vector<cv::Point2d> corners
+    /*for testing
+    unsigned int dim[],
+    cv::Mat image*/
+  );
+
+  // being replaced
+  void GenerateItkMarkerPlane(vtkSmartPointer<vtkPolyData> vtkDepthData, std::vector<itk::Point<double, 3>> &itkPlane, std::vector<cv::Point2d> corners, int dim[], cv::Mat image);
+
 };
 
 #endif

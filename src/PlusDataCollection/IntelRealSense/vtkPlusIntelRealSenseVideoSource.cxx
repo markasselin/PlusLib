@@ -32,6 +32,9 @@ See License.txt for details.
 #include <vtkRenderWindow.h>
 #include <vtkProperty.h>
 
+
+#include "opencv2/highgui.hpp"
+
 #define DEFAULT_FRAME_RATE            30
 #define SR300_MAX_FRAME_RATE          30    // for optical && depth
 #define SR300_MAX_OPTICAL_WIDTH       1920
@@ -72,7 +75,8 @@ public:
   RS::Device* Device;
   //RS::Capture* Capture;
   RS::Projection* Projection;
-  RS::Image* Image;
+  RS::Image* ColorImage;
+  RS::Image* DepthImage;
   RS::Point3DF32 *depthMap;
 
   vtkInternal(vtkPlusIntelRealSenseVideoSource* external)
@@ -161,9 +165,9 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
   if (this->Internal->OutputVideoType == OPTICAL || this->Internal->OutputVideoType == OPTICAL_AND_DEPTH)
   {
     //RS::Image* imageColor = sample->color;
-    this->Internal->Image = sample->color;
+    this->Internal->ColorImage = sample->color;
     RS::ImageData dataColor;
-    this->Internal->Image->AcquireAccess(RS::ImageAccess::ACCESS_READ, RS::PixelFormat::PIXEL_FORMAT_RGB, &dataColor);
+    this->Internal->ColorImage->AcquireAccess(RS::ImageAccess::ACCESS_READ, RS::PixelFormat::PIXEL_FORMAT_RGB, &dataColor);
     
     PixelCodec::ConvertToBmp24(PixelCodec::ComponentOrder_RGB,
       PixelCodec::PixelEncoding_RGB24,
@@ -175,19 +179,36 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
     this->Internal->ColorStream->PlusSource->AddItem(&this->Internal->ColorStream->PlusFrame,
       this->FrameNumber, unfilteredTimestamp);
 
-    this->Internal->Image->ReleaseAccess(&dataColor);
+    //TODO: for testing only
+    cv::Mat cvImage(480, 640, CV_8UC3);
+    PixelCodec::ConvertToBmp24(PixelCodec::ComponentOrder_RGB,
+      PixelCodec::PixelEncoding_RGB24,
+      this->Internal->ColorStream->FrameSizePx[0],
+      this->Internal->ColorStream->FrameSizePx[1],
+      dataColor.planes[0],
+      cvImage.data);
+    std::ostringstream filename;
+    filename << "img" << FrameNumber << ".png";
+    cv::imwrite(filename.str(), cvImage);
+    //end testing
+
+    this->Internal->ColorImage->ReleaseAccess(&dataColor);
   }
   
   // If wanted, update depth frame and add to buffer
   if (this->Internal->OutputVideoType == OPTICAL_AND_DEPTH)
   {
-    this->Internal->Image = sample->depth;
+    this->Internal->DepthImage = sample->depth;
     RS::ImageData dataDepth;
-    this->Internal->Image->AcquireAccess(RS::ImageAccess::ACCESS_READ, RS::PixelFormat::PIXEL_FORMAT_DEPTH, &dataDepth);
+    this->Internal->DepthImage->AcquireAccess(RS::ImageAccess::ACCESS_READ, RS::PixelFormat::PIXEL_FORMAT_DEPTH, &dataDepth);
 
     this->Internal->Projection = this->Internal->Device->CreateProjection();
+    
+    RS::Image* depthImageMappedToColor = this->Internal->Projection->CreateDepthImageMappedToColor(
+      this->Internal->DepthImage,
+      this->Internal->ColorImage);
 
-    this->Internal->Projection->QueryVertices(this->Internal->Image, this->Internal->depthMap);
+    this->Internal->Projection->QueryVertices(depthImageMappedToColor, this->Internal->depthMap);
 
     int numDepthPixels = this->Internal->DepthStream->FrameSizePx[0] * this->Internal->DepthStream->FrameSizePx[1];
     vtkIdType numPoints = numDepthPixels;
@@ -209,10 +230,25 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
     polydata->SetPoints(points);
     polydata->SetVerts(vertices);
     
-    this->Internal->DepthStream->PlusSource->AddItem(polydata, this->FrameNumber, unfilteredTimestamp);
+    //this->Internal->DepthStream->PlusSource->AddItem(polydata, this->FrameNumber, unfilteredTimestamp);
+    
+    vtkSmartPointer<vtkXMLPolyDataWriter> writer =
+      vtkSmartPointer<vtkXMLPolyDataWriter>::New();
+    std::ostringstream filename;
+    filename << "poly" << FrameNumber << ".vtp";
+    writer->SetFileName(filename.str().c_str());
+    writer->SetInputData(polydata);
+    writer->Write();
+    //end testing
 
+    depthImageMappedToColor->Release();
     this->Internal->Projection->Release();
-    this->Internal->Image->ReleaseAccess(&dataDepth);
+    this->Internal->DepthImage->ReleaseAccess(&dataDepth);
+  }
+  
+  //TODO: for testing only - prevent writing an unnecessary number of frames (>10)
+  if (FrameNumber == 9) {
+    return PLUS_FAIL;
   }
   
   this->Modified();
@@ -409,13 +445,13 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalConnect()
       DEFAULT_FRAME_RATE);
 
     // configure depth stream buffer (vtkPolyData)
-    if (this->GetVideoSource("Depth", this->Internal->DepthStream->PlusSource) != PLUS_SUCCESS);
+    //if (this->GetVideoSource("Depth", this->Internal->DepthStream->PlusSource) != PLUS_SUCCESS);
     //configure depth frame (Intel RealSense params)
 
   }
   
   this->Internal->SenseManager->Init();
-
+  
   this->Internal->CaptureManager = this->Internal->SenseManager->QueryCaptureManager();
   this->Internal->Device = this->Internal->CaptureManager->QueryDevice();
   cout << "Depth range: " << this->Internal->Device->QueryDepthSensorRange().min << " to " << this->Internal->Device->QueryDepthSensorRange().max;
