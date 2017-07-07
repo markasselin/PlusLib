@@ -124,7 +124,6 @@ ToolStatus StreamBufferItem::GetStatus() const
 void StreamBufferItem::SetPolyData(vtkSmartPointer<vtkPolyData> polyDataPtr)
 {
   this->PolyData = polyDataPtr;
-  LOG_INFO("Poly data set in theory");
 }
 
 //----------------------------------------------------------------------------

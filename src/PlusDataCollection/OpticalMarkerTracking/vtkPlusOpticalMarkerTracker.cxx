@@ -42,6 +42,8 @@ See License.txt for details.
 #include "opencv2/core.hpp"
 #include "opencv2/imgproc.hpp"
 
+static const int CHANNEL_INDEX_VIDEO = 0;
+static const int CHANNEL_INDEX_POLYDATA = 1;
 
 vtkStandardNewMacro(vtkPlusOpticalMarkerTracker);
 //----------------------------------------------------------------------------
@@ -506,155 +508,20 @@ void vtkPlusOpticalMarkerTracker::GenerateItkData(
 }
 
 //----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::GenerateItkMarkerPlane(vtkSmartPointer<vtkPolyData> vtkDepthData, std::vector<itk::Point<double, 3>> &itkPlane, std::vector<cv::Point2d> corners, int dim[], cv::Mat image)
-{
-  const char TOP = 0, RIGHT = 1, BOTTOM = 2, LEFT = 3;
-  // detect which corner is top
-  double yMin = corners[0].y;
-  int top = 0;
-  for (int i = 1; i < 4; i++)
-  {
-    if (corners[i].y < yMin)
-    {
-      yMin = corners[i].y;
-      top = i;
-    }
-  }
-
-  std::vector<cv::Point_<int>> vertices;
-  // set vertexes in clockwise order (top = 0, ..., left = 3)
-  for (int i = 0; i < 4; i++) {
-    vertices.push_back(corners[(top + i) % 4]);
-  }
-
-  // determine dimensions of containing rectangle
-  int xWidthPx = vertices[RIGHT].x - vertices[LEFT].x;
-  int yHeightPx = vertices[BOTTOM].y - vertices[TOP].y;
-
-
-  // set left boundary
-  int *leftBoundary = new int[yHeightPx];
-  int inflectionPoint = vertices[LEFT].y - vertices[TOP].y;
-  float upperEdgeSlope = (float)(vertices[TOP].x - vertices[LEFT].x) / (vertices[TOP].y - vertices[LEFT].y);
-  float lowerEdgeSlope = (float)(vertices[LEFT].x - vertices[BOTTOM].x) / (vertices[LEFT].y - vertices[BOTTOM].y);
-  for (int i = 0; i <= yHeightPx; i++)
-  {
-    if (i <= inflectionPoint)
-    {
-      leftBoundary[i] = vertices[TOP].x + upperEdgeSlope * i;
-    }
-    else
-    {
-      leftBoundary[i] = vertices[LEFT].x + lowerEdgeSlope * (i - inflectionPoint);
-    }
-  }
-
-  // set right boundary
-  int *rightBoundary = new int[yHeightPx];
-  inflectionPoint = vertices[RIGHT].y - vertices[TOP].y;
-  upperEdgeSlope = (float)(vertices[TOP].x - vertices[RIGHT].x) / (vertices[TOP].y - vertices[RIGHT].y);
-  lowerEdgeSlope = (float)(vertices[RIGHT].x - vertices[BOTTOM].x) / (vertices[RIGHT].y - vertices[BOTTOM].y);
-  for (int i = 0; i <= yHeightPx; i++)
-  {
-    if (i <= inflectionPoint)
-    {
-      rightBoundary[i] = vertices[TOP].x + upperEdgeSlope * i;
-    }
-    else
-    {
-      rightBoundary[i] = vertices[RIGHT].x + lowerEdgeSlope * (i - inflectionPoint);
-    }
-  }
-
-  LOG_WARNING("TOP: " << vertices[TOP]);
-  LOG_WARNING("RIGHT: " << vertices[RIGHT]);
-  LOG_WARNING("BOTTOM: " << vertices[BOTTOM]);
-  LOG_WARNING("LEFT: " << vertices[LEFT]);
-
-  for (int i = 0; i <= yHeightPx; i++)
-  {
-    LOG_INFO("y: " << i+vertices[TOP].y << " xLeft: " << leftBoundary[i] << " xRight: " << rightBoundary[i])
-  }
-
-  for (int yPx = vertices[TOP].y; yPx <= vertices[BOTTOM].y; yPx++)
-  {
-    for (int xPx = leftBoundary[yPx-vertices[TOP].y]; xPx <= rightBoundary[yPx-vertices[TOP].y]; xPx++)
-    {
-      cv::Vec3b color = image.at<cv::Vec3b>(cv::Point(xPx, yPx));
-      color[0] = 0;
-      color[1] = 0;
-      color[2] = 255;
-      image.at<cv::Vec3b>(cv::Point(xPx, yPx)) = color;
-    }
-  }
-
-  //TODO: visualization only - draw plane border
-  for (int i = 0; i <= yHeightPx; i++)
-  {
-    cv::Vec3b color = image.at<cv::Vec3b>(cv::Point(leftBoundary[i], vertices[TOP].y + i));
-    color[0] = 255;
-    color[1] = 0;
-    color[2] = 0;
-    image.at<cv::Vec3b>(cv::Point(leftBoundary[i], vertices[TOP].y + i)) = color;
-  }
-
-  for (int i = 0; i <= yHeightPx; i++)
-  {
-    cv::Vec3b color = image.at<cv::Vec3b>(cv::Point(rightBoundary[i], vertices[TOP].y + i));
-    color[0] = 0;
-    color[1] = 255;
-    color[2] = 0;
-    image.at<cv::Vec3b>(cv::Point(rightBoundary[i], vertices[TOP].y + i)) = color;
-  }
-
-
-  // iterate through rows
-    // iterate from left to right boundary
-      // get point from polydata
-      // if point non zero, add to polydata
-  // check that some points are actaully zero
-
-  for (int yPx = vertices[TOP].y; yPx <= vertices[BOTTOM].y; yPx++)
-  {
-    for (int xPx = leftBoundary[yPx - vertices[TOP].y]; xPx <= rightBoundary[yPx - vertices[TOP].y]; xPx++)
-    {
-      itk::Point<double, 3> point;
-      vtkIdType pointId = dim[0] * yPx + xPx;
-      double *polyPoint = vtkDepthData->GetPoint(pointId);
-      point[0] = polyPoint[0];
-      point[1] = polyPoint[1];
-      point[2] = polyPoint[2];
-      itkPlane.push_back(point);
-    }
-  }
-
-
-}
-
-//----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
 {
-  //TODO: for testing only - read only frame that exist (10)
-  //if (FrameNumber > 9) {
-  //  return PLUS_FAIL;
-  //}
-
+  LOG_INFO("----OMT BEGINS HERE----");
   //TODO: refactor this to check for optical & depth data, or simply optical
-  /*if (this->InputChannels.size() != 1)
+  if (this->InputChannels.size() != 2)
   {
     LOG_ERROR("ImageProcessor device requires exactly 1 input stream (that contains video data). Check configuration.");
     return PLUS_FAIL;
-  }*/
-
-  // Get image to tracker transform from the tracker (only request 1 frame, the latest)
-  if (!this->InputChannels[0]->GetVideoDataAvailable())
-  {
-    LOG_TRACE("Processed data is not generated, as no video data is available yet. Device ID: " << this->GetDeviceId());
-    return PLUS_SUCCESS;
   }
 
+  // Get image to tracker transform from the tracker (only request 1 frame, the latest)
+
   double oldestTrackingTimestamp(0);
-  if (this->InputChannels[0]->GetOldestTimestamp(oldestTrackingTimestamp) == PLUS_SUCCESS)
+  if (this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetLatestTimestamp(oldestTrackingTimestamp) == PLUS_SUCCESS)
   {
     if (this->LastProcessedInputDataTimestamp > oldestTrackingTimestamp)
     {
@@ -664,17 +531,109 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     }
   }
 
+
+
+  if (!this->InputChannels[CHANNEL_INDEX_VIDEO]->GetVideoDataAvailable())
+  {
+    LOG_TRACE("Processed data is not generated, as no video data is available yet. Device ID: " << this->GetDeviceId());
+    return PLUS_SUCCESS;
+  }
+
+  //double oldestTrackingTimestamp(0);
+  //if (this->InputChannels[CHANNEL_INDEX_VIDEO]->GetOldestTimestamp(oldestTrackingTimestamp) == PLUS_SUCCESS)
+  //{
+  //  if (this->LastProcessedInputDataTimestamp > oldestTrackingTimestamp)
+  //  {
+  //    LOG_INFO("Processed image generation started. No tracking data was available between " << this->LastProcessedInputDataTimestamp << "-" << oldestTrackingTimestamp <<
+  //      "sec, therefore no processed images were generated during this time period.");
+  //    this->LastProcessedInputDataTimestamp = oldestTrackingTimestamp;
+  //  }
+  //}
+
   PlusTrackedFrame trackedFrame;
-  if (this->InputChannels[0]->GetTrackedFrame(trackedFrame) != PLUS_SUCCESS)
+  if (this->InputChannels[CHANNEL_INDEX_VIDEO]->GetTrackedFrame(trackedFrame) != PLUS_SUCCESS)
   {
     LOG_ERROR("Error while getting latest tracked frame. Last recorded timestamp: " << std::fixed << this->LastProcessedInputDataTimestamp << ". Device ID: " << this->GetDeviceId());
     this->LastProcessedInputDataTimestamp = vtkPlusAccurateTimer::GetSystemTime(); // forget about the past, try to add frames that are acquired from now on
     return PLUS_FAIL;
   }
+ 
+  PlusTrackedFrame polyDataTrackedFrame;
+  if (this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetTrackedFrame(oldestTrackingTimestamp, polyDataTrackedFrame) != PLUS_SUCCESS)
+  {
+    LOG_ERROR("Error while getting latest tracked frame. Last recorded oldestTrackingTimestamp: " << std::fixed << this->LastProcessedInputDataTimestamp << ". Device ID: " << this->GetDeviceId());
+    this->LastProcessedInputDataTimestamp = vtkPlusAccurateTimer::GetSystemTime(); // forget about the past, try to add frames that are acquired from now on
+    return PLUS_FAIL;
+  }
+
+
+  vtkPolyData* poly = polyDataTrackedFrame.GetPolyData();
+  if (poly != NULL)
+  {
+    //LOG_INFO("OMT verts: " << poly->GetNumberOfVerts());
+  }
+  else
+  {
+    LOG_INFO("NULL polydata");
+  }
+
+
+
+  //LOG_INFO("VIDEO TIME: " << trackedFrame.GetTimestamp());
+  //LOG_INFO("POLY TIME: " << polyDataTrackedFrame.GetTimestamp());
+  //poly->GetNumberOfVerts();
+
+  ////////vtksmartpointer<vtkpolydata> polydata = vtksmartpointer<vtkpolydata>::new();
+  //////////todo: read polydata from file (replace this by reading from buffers)
+  ////////ostringstream vtpfilename;
+  ////////vtpfilename << "poly" << framenumber << ".vtp";
+  ////////vtksmartpointer<vtkxmlpolydatareader> reader = vtksmartpointer<vtkxmlpolydatareader>::new();
+  ////////reader->setfilename(vtpfilename.str().c_str());
+  ////////reader->update();
+  ////////polydata = reader->getoutput();
+
+  ////TODO: for testing visaulize polydata
+
+  if (false) {
+    vtkSmartPointer<vtkPolyDataMapper> mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+    mapper->SetInputData(poly);
+    vtkSmartPointer<vtkActor> actor = vtkSmartPointer<vtkActor>::New();
+    actor->SetMapper(mapper);
+    vtkSmartPointer<vtkRenderer> renderer = vtkSmartPointer<vtkRenderer>::New();
+    vtkSmartPointer<vtkRenderWindow> renderWindow = vtkSmartPointer<vtkRenderWindow>::New();
+    renderWindow->AddRenderer(renderer);
+    vtkSmartPointer<vtkRenderWindowInteractor> renderWindowInteractor = vtkSmartPointer<vtkRenderWindowInteractor>::New();
+    renderWindowInteractor->SetRenderWindow(renderWindow);
+    renderer->AddActor(actor);
+    renderer->SetBackground(.2, .3, .4);
+    vtkSmartPointer<vtkAxesActor> axes = vtkSmartPointer<vtkAxesActor>::New();
+    vtkSmartPointer<vtkOrientationMarkerWidget> widget = vtkSmartPointer<vtkOrientationMarkerWidget>::New();
+    widget->SetOutlineColor(0.93, 0.57, 0.13);
+    widget->SetOrientationMarker(axes);
+    widget->SetInteractor(renderWindowInteractor);
+    widget->SetViewport(0, 0, 0.4, 0.4);
+    widget->SetEnabled(1);
+    widget->InteractiveOn();
+    renderer->ResetCamera();
+    renderWindow->Render();
+    renderWindowInteractor->Start();
+  }
+
+
+/*
+
+
+
+
+
+
+
+
+
 
   // get polydata from buffers
   StreamBufferItem item;
-  //this->InputChannels[1]->GetStreamBufferitem
+  //this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetStreamBufferitem
 
   // get dimensions & data
   FrameSizeType dim = trackedVideoFrame.GetFrameSize();
@@ -692,39 +651,6 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
   ////////image = cv::imread(filename.str());
   ////////// end testing
 
-  ////////vtksmartpointer<vtkpolydata> polydata = vtksmartpointer<vtkpolydata>::new();
-  //////////todo: read polydata from file (replace this by reading from buffers)
-  ////////ostringstream vtpfilename;
-  ////////vtpfilename << "poly" << framenumber << ".vtp";
-  ////////vtksmartpointer<vtkxmlpolydatareader> reader = vtksmartpointer<vtkxmlpolydatareader>::new();
-  ////////reader->setfilename(vtpfilename.str().c_str());
-  ////////reader->update();
-  ////////polydata = reader->getoutput();
-
-  ////TODO: for testing visaulize polydata
-  //vtkSmartPointer<vtkPolyDataMapper> mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-  //mapper->SetInputData(polydata);
-  //vtkSmartPointer<vtkActor> actor = vtkSmartPointer<vtkActor>::New();
-  //actor->SetMapper(mapper);
-  //vtkSmartPointer<vtkRenderer> renderer = vtkSmartPointer<vtkRenderer>::New();
-  //vtkSmartPointer<vtkRenderWindow> renderWindow = vtkSmartPointer<vtkRenderWindow>::New();
-  //renderWindow->AddRenderer(renderer);
-  //vtkSmartPointer<vtkRenderWindowInteractor> renderWindowInteractor = vtkSmartPointer<vtkRenderWindowInteractor>::New();
-  //renderWindowInteractor->SetRenderWindow(renderWindow);
-  //renderer->AddActor(actor);
-  //renderer->SetBackground(.2, .3, .4);
-  //vtkSmartPointer<vtkAxesActor> axes = vtkSmartPointer<vtkAxesActor>::New();
-  //vtkSmartPointer<vtkOrientationMarkerWidget> widget = vtkSmartPointer<vtkOrientationMarkerWidget>::New();
-  //widget->SetOutlineColor(0.93, 0.57, 0.13);
-  //widget->SetOrientationMarker(axes);
-  //widget->SetInteractor(renderWindowInteractor);
-  //widget->SetViewport(0, 0, 0.4, 0.4);
-  //widget->SetEnabled(1);
-  //widget->InteractiveOn();
-  //renderer->ResetCamera();
-  //renderWindow->Render();
-  //renderWindowInteractor->Start();
-  //// end testing
 
   // detect markers in frame
   MDetector.detect(image, markers);
@@ -761,7 +687,6 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
         typedef itk::PlaneParametersEstimator<3> PlaneEstimatorType;
         typedef itk::RANSAC<itk::Point<double, 3>, double> RANSACType;
 
-        // THIS LINE CAUSES AN ERROR- WHY?
         PlaneEstimatorType::Pointer planeEstimator = PlaneEstimatorType::New();
         //planeEstimator->SetDelta(maxDistanceFromPlane);
         //planeEstimator->LeastSquaresEstimate(itkPlane, planeParameters);
@@ -819,7 +744,19 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     }
   }
 
-  LOG_INFO("Frame: " << FrameNumber);
+
+
+
+
+
+
+  */
+
+
+
+
+  //TODO: add logging for frame rate
+  
   this->FrameNumber++;
 
   return PLUS_SUCCESS;

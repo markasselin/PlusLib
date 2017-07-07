@@ -135,6 +135,18 @@ public:
   PlusStatus DeepCopy( StreamBufferItem* dataItem );
 
   PlusVideoFrame& GetFrame() { return this->Frame; };
+  /*! returns true if item contains image data, false if it contains polydata*/
+  bool isImage()
+  {
+    if (this->Frame.IsImageValid())
+    {
+      return true;
+    }
+    else
+    {
+      return false;
+    }
+  };
 
   /*!
   Return pointer to vtkPolyData in this buffer item.
@@ -163,6 +175,10 @@ public:
   bool HasValidVideoData() const
   {
     return Frame.IsImageValid();
+  }
+  bool HasValidBulkData() const
+  {
+    return Frame.IsImageValid() || (this->PolyData != NULL);
   }
   bool HasValidPolyData() const;
 

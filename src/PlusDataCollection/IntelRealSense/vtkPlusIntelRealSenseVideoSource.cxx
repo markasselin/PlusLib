@@ -136,15 +136,6 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalStopRecording()
 }
 
 //----------------------------------------------------------------------------
-void GeneratePolyData(vtkSmartPointer<vtkPolyData>, unsigned char * image)
-{
-
-}
-
-// for testing
-int count = 0;
-
-//----------------------------------------------------------------------------
 PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
 {
   // wait until both optical and depth frames are ready
@@ -178,19 +169,6 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
       
     this->Internal->ColorStream->PlusSource->AddItem(&this->Internal->ColorStream->PlusFrame,
       this->FrameNumber, unfilteredTimestamp);
-
-    //TODO: for testing only
-    cv::Mat cvImage(480, 640, CV_8UC3);
-    PixelCodec::ConvertToBmp24(PixelCodec::ComponentOrder_RGB,
-      PixelCodec::PixelEncoding_RGB24,
-      this->Internal->ColorStream->FrameSizePx[0],
-      this->Internal->ColorStream->FrameSizePx[1],
-      dataColor.planes[0],
-      cvImage.data);
-    std::ostringstream filename;
-    filename << "img" << FrameNumber << ".png";
-    cv::imwrite(filename.str(), cvImage);
-    //end testing
 
     this->Internal->ColorImage->ReleaseAccess(&dataColor);
   }
@@ -230,30 +208,17 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
     polydata->SetPoints(points);
     polydata->SetVerts(vertices);
     
-    //this->Internal->DepthStream->PlusSource->AddItem(polydata, this->FrameNumber, unfilteredTimestamp);
-    
-    vtkSmartPointer<vtkXMLPolyDataWriter> writer =
-      vtkSmartPointer<vtkXMLPolyDataWriter>::New();
-    std::ostringstream filename;
-    filename << "poly" << FrameNumber << ".vtp";
-    writer->SetFileName(filename.str().c_str());
-    writer->SetInputData(polydata);
-    writer->Write();
-    //end testing
+    this->Internal->DepthStream->PlusSource->AddItem(polydata, this->FrameNumber, unfilteredTimestamp);
 
     depthImageMappedToColor->Release();
     this->Internal->Projection->Release();
     this->Internal->DepthImage->ReleaseAccess(&dataDepth);
   }
   
-  //TODO: for testing only - prevent writing an unnecessary number of frames (>10)
-  if (FrameNumber == 9) {
-    return PLUS_FAIL;
-  }
-  
   this->Modified();
   this->FrameNumber++;
-  LOG_INFO("FRAME: " << this->FrameNumber);
+  // TODO: add code that logs frame rate
+  LOG_INFO("Frame: " << FrameNumber);
   this->Internal->SenseManager->ReleaseFrame();
   return PLUS_SUCCESS;
 }
@@ -445,7 +410,11 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalConnect()
       DEFAULT_FRAME_RATE);
 
     // configure depth stream buffer (vtkPolyData)
-    //if (this->GetVideoSource("Depth", this->Internal->DepthStream->PlusSource) != PLUS_SUCCESS);
+    if (this->GetVideoSource("Depth", this->Internal->DepthStream->PlusSource) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Unable to retrieve the DEPTH video source in the Intel RealSense Video device.");
+      return PLUS_FAIL;
+    }
     //configure depth frame (Intel RealSense params)
 
   }

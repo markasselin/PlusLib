@@ -248,6 +248,19 @@ bool vtkPlusTimestampedCircularBuffer::GetLatestItemHasValidVideoData()
 }
 
 //----------------------------------------------------------------------------
+bool vtkPlusTimestampedCircularBuffer::GetLatestItemHasValidBulkData()
+{
+  PlusLockGuard< vtkPlusTimestampedCircularBuffer > bufferGuardedLock(this);
+  if (this->NumberOfItems < 1)
+  {
+    return false;
+  }
+  int latestItemBufferIndex = (this->WritePointer > 0) ? (this->WritePointer - 1) : (this->BufferItemContainer.size() - 1);
+  return this->BufferItemContainer[latestItemBufferIndex].HasValidBulkData();
+}
+
+
+//----------------------------------------------------------------------------
 bool vtkPlusTimestampedCircularBuffer::GetLatestItemHasValidTransformData()
 {
   PlusLockGuard< vtkPlusTimestampedCircularBuffer > bufferGuardedLock(this);

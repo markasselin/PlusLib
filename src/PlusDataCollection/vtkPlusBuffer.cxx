@@ -472,7 +472,7 @@ PlusStatus vtkPlusBuffer::AddItem(void* imageDataPtr,
   return PLUS_SUCCESS;
 }
 
-PlusStatus vtkPlusBuffer::AddItem(vtkSmartPointer<vtkPolyData> polyDataPtr, long frameNumber, double unfilteredTimestamp/*=UNDEFINED_TIMESTAMP*/, double filteredTimestamp/*=UNDEFINED_TIMESTAMP*/)
+PlusStatus vtkPlusBuffer::AddItem(vtkPolyData* polyDataPtr, long frameNumber, double unfilteredTimestamp/*=UNDEFINED_TIMESTAMP*/, double filteredTimestamp/*=UNDEFINED_TIMESTAMP*/)
 {
   if (unfilteredTimestamp == UNDEFINED_TIMESTAMP)
   {
@@ -524,7 +524,6 @@ PlusStatus vtkPlusBuffer::AddItem(vtkSmartPointer<vtkPolyData> polyDataPtr, long
   }
 
   newObjectInBuffer->SetPolyData(polyDataPtr);
-
   newObjectInBuffer->SetFilteredTimestamp(filteredTimestamp);
   newObjectInBuffer->SetUnfilteredTimestamp(unfilteredTimestamp);
   newObjectInBuffer->SetIndex(frameNumber);
@@ -1543,6 +1542,12 @@ PlusStatus vtkPlusBuffer::GetFrameSize(unsigned int& _arg1, unsigned int& _arg2,
 FrameSizeType vtkPlusBuffer::GetFrameSize() const
 {
   return this->FrameSize;
+}
+
+//-----------------------------------------------------------------------------
+bool vtkPlusBuffer::GetLatestItemHasValidBulkData()
+{
+  return this->StreamBuffer->GetLatestItemHasValidBulkData();
 }
 
 //-----------------------------------------------------------------------------

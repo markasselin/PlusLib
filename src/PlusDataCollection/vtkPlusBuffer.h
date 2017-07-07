@@ -128,7 +128,7 @@ public:
   Add vtkPolyData to the buffer.
   TEMPORARY_ONLY
   */
-  virtual PlusStatus AddItem(vtkSmartPointer<vtkPolyData> polyDataPtr,
+  virtual PlusStatus AddItem(vtkPolyData* polyDataPtr,
                              long frameNumber,
                              double unfilteredTimestamp = UNDEFINED_TIMESTAMP,
                              double filteredTimestamp = UNDEFINED_TIMESTAMP);
@@ -167,6 +167,9 @@ public:
 
   /*! Returns true if the latest item contains valid video data */
   virtual bool GetLatestItemHasValidVideoData();
+
+  /*! Returns true if the latest item contains valid bulk (video, mesh, ...) data */
+  virtual bool GetLatestItemHasValidBulkData();
 
   /*! Returns true if the latest item contains valid transform data */
   virtual bool GetLatestItemHasValidTransformData();

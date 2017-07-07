@@ -104,6 +104,8 @@ public:
   virtual ItemStatus GetUnfilteredTimeStamp( const BufferItemUidType uid, double& unfilteredTimestamp );
 
   virtual bool GetLatestItemHasValidVideoData();
+  virtual bool GetLatestItemHasValidBulkData();
+
   virtual bool GetLatestItemHasValidTransformData();
   virtual bool GetLatestItemHasValidFieldData();
 

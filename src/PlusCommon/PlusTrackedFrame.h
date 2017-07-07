@@ -10,6 +10,7 @@
 #include "vtkPlusCommonExport.h"
 
 #include "PlusVideoFrame.h"
+#include "vtkPolyData.h"
 
 class vtkMatrix4x4;
 class vtkPoints;
@@ -54,6 +55,15 @@ public:
 
   /*! Get image data */
   PlusVideoFrame* GetImageData() { return &(this->ImageData); };
+
+  /*! Get vtkPolyData */
+  vtkPolyData* GetPolyData() { return this->PolyData; };
+
+  /*! Set polydata*/
+  void SetPolyData(vtkPolyData* poly)
+  {
+    this->PolyData = poly;
+  }
 
   /*! Set timestamp */
   void SetTimestamp(double value);
@@ -163,6 +173,8 @@ public:
 
 protected:
   PlusVideoFrame ImageData;
+  vtkSmartPointer<vtkPolyData> PolyData;
+
   double Timestamp;
 
   FieldMapType CustomFrameFields;

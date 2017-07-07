@@ -84,6 +84,7 @@ public:
 
   bool GetTrackingDataAvailable();
   bool GetVideoDataAvailable();
+  bool GetBulkDataAvailable();
   bool GetFieldDataAvailable();
   bool GetTrackingEnabled() const;
   bool GetVideoEnabled() const;
@@ -109,6 +110,7 @@ public:
     \param trackedFrame Target tracked frame
     \param enableImageData Enable returning of image data. Tracking data will be interpolated at the timestamp of the image data.
   */
+
   virtual PlusStatus GetTrackedFrame(double timestamp, PlusTrackedFrame& trackedFrame, bool enableImageData = true);
   virtual PlusStatus GetTrackedFrame(PlusTrackedFrame& trackedFrame);
 
