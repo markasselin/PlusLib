@@ -21,7 +21,10 @@ See License.txt for details.
 #include "vtkMatrix4x4.h"
 #include "PixelCodec.h"
 #include "RANSAC.h"
+#include "ParametersEstimator.h"
 #include "PlaneParametersEstimator.h"
+
+
 
 // aruco
 #include "dictionary.h"
@@ -44,7 +47,8 @@ See License.txt for details.
 
 static const int CHANNEL_INDEX_VIDEO = 0;
 static const int CHANNEL_INDEX_POLYDATA = 1;
-
+static const int LEFT_BOUNDARY = false;
+static const int RIGHT_BOUNDARY = true;
 vtkStandardNewMacro(vtkPlusOpticalMarkerTracker);
 //----------------------------------------------------------------------------
 vtkPlusOpticalMarkerTracker::TrackedTool::TrackedTool(int MarkerId, float MarkerSizeMm, std::string ToolSourceId)
@@ -157,6 +161,8 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
     }
   }
 
+  //TODO: read tracking type from number of inputs
+  this->TrackingMethod = OPTICAL_AND_DEPTH;
   return PLUS_SUCCESS;
 }
 
@@ -193,15 +199,12 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalConnect()
     return PLUS_FAIL;
   }
 
-  // TODO: Need error handling for this?
   CP.readFromXMLFile(calibFilePath);
   MDetector.setDictionary(MarkerDictionary);
+
   // threshold tuning numbers from aruco_test
-  aruco::MarkerDetector::Params params;
-  params._thresParam1 = 7;
-  params._thresParam2 = 7;
-  params._thresParam1_range = 2;
-  this->Internal->MarkerDetector->setParams(params);
+  MDetector.setThresholdParams(7, 7);
+  MDetector.setThresholdParamRange(2, 0);
 
   bool lowestRateKnown = false;
   double lowestRate = 30; // just a usual value (FPS)
@@ -311,66 +314,114 @@ vtkPlusOpticalMarkerTracker::MARKER_ORIENTATION vtkPlusOpticalMarkerTracker::Det
 }
 
 //----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::CopyToItkData(int top, int bottom, int *leftBoundary, int *rightBoundary)
+void vtkPlusOpticalMarkerTracker::CopyToItkData(
+  vtkSmartPointer<vtkPolyData> vtkDepthData,
+  std::vector<itk::Point<double, 3>> &itkData,
+  int top,
+  int bottom,
+  int *leftBoundary,
+  int *rightBoundary,
+  cv::Mat image)
 {
+  itk::Point<double, 3> itkPoint;
+  // for testing
+  vtkSmartPointer<vtkPoints> points = vtkSmartPointer<vtkPoints>::New();
+  vtkSmartPointer<vtkCellArray> vertices = vtkSmartPointer<vtkCellArray>::New();
+
   for (int yPx = top; yPx <= bottom; yPx++)
   {
-    for (int xPx = leftBoundary[yPx]; xPx <= rightBoundary[yPx]; xPx++)
+    for (int xPx = leftBoundary[yPx - top]; xPx <= rightBoundary[yPx - top]; xPx++)
     {
-      // copy to ITK data
+      // color in image for visualization
+      cv::Vec3b color = image.at<cv::Vec3b>(cv::Point(xPx, yPx));
+      color[0] = 0;
+      color[1] = 0;
+      color[2] = 255;
+      //image.at<cv::Vec3b>(cv::Point(xPx, yPx)) = color;
+
+      // TODO: Use non hard-coded dimension
+      vtkIdType ptId = 640 * yPx + xPx;
+      double vtkPoint[3];
+      vtkDepthData->GetPoint(ptId, vtkPoint);
+
+      // depth filter to select only points between 5cm and 200cm
+      if (vtkPoint[2] > 50 && vtkPoint[2] < 2000)
+      {
+        itkPoint[0] = vtkPoint[0];
+        itkPoint[1] = vtkPoint[1];
+        itkPoint[2] = vtkPoint[2];
+        itkData.push_back(itkPoint);
+
+        //LOG_WARNING("x: " << xPx << " y: " << yPx);
+        //TODO: use non hard-coded dimensions here
+        vtkIdType pid[1];
+        pid[0] = points->InsertNextPoint(vtkPoint[0], vtkPoint[1], vtkPoint[2]);
+        vertices->InsertNextCell(1, pid);
+      }
     }
+  }
+
+  if (false)
+  {
+    vtkSmartPointer<vtkPolyData> polyPlane = vtkSmartPointer<vtkPolyData>::New();
+    polyPlane->SetPoints(points);
+    polyPlane->SetVerts(vertices);
+
+    // show polydata plane for testing
+    vtkSmartPointer<vtkPolyDataMapper> mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+    mapper->SetInputData(polyPlane);
+    vtkSmartPointer<vtkActor> actor = vtkSmartPointer<vtkActor>::New();
+    actor->SetMapper(mapper);
+    vtkSmartPointer<vtkRenderer> renderer = vtkSmartPointer<vtkRenderer>::New();
+    vtkSmartPointer<vtkRenderWindow> renderWindow = vtkSmartPointer<vtkRenderWindow>::New();
+    renderWindow->AddRenderer(renderer);
+    vtkSmartPointer<vtkRenderWindowInteractor> renderWindowInteractor = vtkSmartPointer<vtkRenderWindowInteractor>::New();
+    renderWindowInteractor->SetRenderWindow(renderWindow);
+    renderer->AddActor(actor);
+    renderer->SetBackground(.2, .3, .4);
+    vtkSmartPointer<vtkAxesActor> axes = vtkSmartPointer<vtkAxesActor>::New();
+    vtkSmartPointer<vtkOrientationMarkerWidget> widget = vtkSmartPointer<vtkOrientationMarkerWidget>::New();
+    widget->SetOutlineColor(0.93, 0.57, 0.13);
+    widget->SetOrientationMarker(axes);
+    widget->SetInteractor(renderWindowInteractor);
+    widget->SetViewport(0, 0, 0.4, 0.4);
+    widget->SetEnabled(1);
+    widget->InteractiveOn();
+    renderer->ResetCamera();
+    renderWindow->Render();
+    renderWindowInteractor->Start();
+    LOG_INFO("num points: " << polyPlane->GetNumberOfPoints());
   }
 }
 
 //----------------------------------------------------------------------------
 float vtkPlusOpticalMarkerTracker::DetermineSlope(cv::Point2d corner1, cv::Point2d corner2)
 {
-  if (corner1.x == corner2.x || corner1.y == corner2.y)
+  if (corner1.y == corner2.y)
   {
     return 0.0;
   }
   else
   {
-    return (float)(corner1.x - corner2.x) / (corner1.y - corner2.y);
+    return ((float)(corner1.x - corner2.x)) / (corner1.y - corner2.y);
   }
 }
 
 //----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::GenerateBoundary(int* boundary, std::vector<cv::Point2d> corners, int top, int bottom, bool isRight)
+void vtkPlusOpticalMarkerTracker::GenerateBoundary(int* boundary, std::vector<cv::Point2d> corners, int top, bool isRight)
 {
-  int currentUpper = 0, currentLower = 1;
-  // for line of type x=ym+b (x is dependent variable, y is dependent)
-  int mPx = DetermineSlope(corners[0], corners[1]), bPx = corners[0].x;
-  
-  for (int yPx = top; yPx < bottom; yPx++)
+  int numSegments = corners.size() - 1;
+
+  for (int segIndex = 0; segIndex < numSegments; segIndex++)
   {
-    if (yPx == corners[currentLower].y)
+    int segTop = corners[segIndex].y;
+    int segBottom = corners[segIndex + 1].y;
+    float mPx = DetermineSlope(corners[segIndex], corners[segIndex + 1]);
+    int x1Px = corners[segIndex].x;
+    int y1Px = corners[segIndex].y;
+    for (int yPx = segTop; yPx <= segBottom; yPx++)
     {
-      // we have reached the next corner on the boundary path
-      boundary[yPx] = corners[currentLower].x;
-      currentUpper++;
-      currentLower++;
-      mPx = DetermineSlope(corners[currentUpper], corners[currentLower]);
-      bPx = corners[currentUpper].x;
-    }
-    else if (corners[currentUpper].y == corners[currentLower].y)
-    {
-      // horizontal line
-      if (isRight)
-      {
-        // right boundary, select rightmost corner
-        boundary[yPx] = (corners[currentUpper].x > corners[currentLower].x) ? corners[currentUpper].x : corners[currentLower].x;
-      }
-      else 
-      {
-        // left boundary, select leftmost corner
-        boundary[yPx] = (corners[currentUpper].x < corners[currentLower].x) ? corners[currentUpper].x : corners[currentLower].x;
-      }
-    }
-    else
-    {
-      // vertical or skew line
-      boundary[yPx] = mPx * yPx + bPx;
+      boundary[yPx - top] = mPx * (yPx - y1Px) + x1Px;
     }
   }
 }
@@ -379,14 +430,19 @@ void vtkPlusOpticalMarkerTracker::GenerateBoundary(int* boundary, std::vector<cv
 void vtkPlusOpticalMarkerTracker::GenerateSkewLeftItkData(
   vtkSmartPointer<vtkPolyData> vtkDepthData,
   std::vector<itk::Point<double, 3>> &itkData,
-  std::vector<cv::Point2d> corners
-  /*for testing
+  std::vector<cv::Point2d> corners,
+  /*for testing*/
   unsigned int dim[],
-  cv::Mat image*/)
+  cv::Mat image)
 {
   const char TOP = 0, BOTTOM = 1, LOWER_LEFT = 2, UPPER_LEFT = 3;
   int top = corners[TOP].y, bottom = corners[BOTTOM].y;
   int height = bottom - top;
+
+  //LOG_WARNING("TOP        " << corners[TOP].y);
+  //LOG_WARNING("BOTTOM     " << corners[BOTTOM].y);
+  //LOG_WARNING("UPPER LEFT " << corners[UPPER_LEFT].y);
+  //LOG_WARNING("LOWER LEFT " << corners[LOWER_LEFT].y);
 
   // generate left boundary
   int* leftBoundary = new int[height];
@@ -395,37 +451,44 @@ void vtkPlusOpticalMarkerTracker::GenerateSkewLeftItkData(
   leftPath.push_back(corners[UPPER_LEFT]);
   leftPath.push_back(corners[LOWER_LEFT]);
   leftPath.push_back(corners[BOTTOM]);
-  GenerateBoundary(leftBoundary, leftPath, top, bottom, false);
+  GenerateBoundary(leftBoundary, leftPath, top, LEFT_BOUNDARY);
 
   // generate right boundary
   int* rightBoundary = new int[height];
   std::vector<cv::Point2d> rightPath;
   rightPath.push_back(corners[TOP]);
   rightPath.push_back(corners[BOTTOM]);
-  GenerateBoundary(rightBoundary, rightPath, top, bottom, true);
+  GenerateBoundary(rightBoundary, rightPath, top, RIGHT_BOUNDARY);
 
   // copy vtk->itk
+  CopyToItkData(vtkDepthData, itkData, top, bottom, leftBoundary, rightBoundary, image);
 }
 
 //----------------------------------------------------------------------------
 void vtkPlusOpticalMarkerTracker::GenerateSkewRightItkData(
   vtkSmartPointer<vtkPolyData> vtkDepthData,
   std::vector<itk::Point<double, 3>> &itkData,
-  std::vector<cv::Point2d> corners
-  /*for testing
+  std::vector<cv::Point2d> corners,
+  /*for testing*/
   unsigned int dim[],
-  cv::Mat image*/)
+  cv::Mat image)
 {
   const char TOP = 0, UPPER_RIGHT = 1, LOWER_RIGHT = 2, BOTTOM = 3;
-  int top = corners[TOP].y, bottom = corners[BOTTOM].y;
-  int height = bottom - top;
+  int top = corners[TOP].y;
+  int bottom = corners[BOTTOM].y;
+  int height = bottom - top + 1;
+
+  //LOG_WARNING("TOP          x: " << corners[TOP].x << " y: " << corners[TOP].y);
+  //LOG_WARNING("BOTTOM       X: " << corners[BOTTOM].x << " y: " << corners[BOTTOM].y);
+  //LOG_WARNING("UPPER RIGHT  x: " << corners[UPPER_RIGHT].x << " y: " << corners[UPPER_RIGHT].y);
+  //LOG_WARNING("LOWER RIGHT  x: " << corners[LOWER_RIGHT].x << " y: " << corners[LOWER_RIGHT].y);
 
   // generate left boundary
   int* leftBoundary = new int[height];
   std::vector<cv::Point2d> leftPath;
   leftPath.push_back(corners[TOP]);
   leftPath.push_back(corners[BOTTOM]);
-  GenerateBoundary(leftBoundary, leftPath, top, bottom, false);
+  GenerateBoundary(leftBoundary, leftPath, top, LEFT_BOUNDARY);
 
   // generate right boundary
   int* rightBoundary = new int[height];
@@ -434,92 +497,305 @@ void vtkPlusOpticalMarkerTracker::GenerateSkewRightItkData(
   rightPath.push_back(corners[UPPER_RIGHT]);
   rightPath.push_back(corners[LOWER_RIGHT]);
   rightPath.push_back(corners[BOTTOM]);
-  GenerateBoundary(rightBoundary, rightPath, top, bottom, true);
+  GenerateBoundary(rightBoundary, rightPath, top, RIGHT_BOUNDARY);
 
   // copy vtk->itk
+  CopyToItkData(vtkDepthData, itkData, top, bottom, leftBoundary, rightBoundary, image);
 }
 
 //----------------------------------------------------------------------------
 void vtkPlusOpticalMarkerTracker::GenerateRotatedItkData(
   vtkSmartPointer<vtkPolyData> vtkDepthData,
   std::vector<itk::Point<double, 3>> &itkData,
-  std::vector<cv::Point2d> corners
-  /*for testing
+  std::vector<cv::Point2d> corners,
+  /*for testing*/
   unsigned int dim[],
-  cv::Mat image*/)
+  cv::Mat image)
 {
   const char TOP = 0, RIGHT = 1, BOTTOM = 2, LEFT = 3;
-  int top = corners[TOP].y, bottom = corners[BOTTOM].y;
-  int height = bottom - top;
+  int top = corners[TOP].y;
+  int bottom = corners[BOTTOM].y;
+  int height = bottom - top + 1;
+
+  //LOG_WARNING("TOP    x:" << corners[TOP].x << " y: " << corners[TOP].y);
+  //LOG_WARNING("BOTTOM x:" << corners[BOTTOM].x << " y: " << corners[BOTTOM].y);
+  //LOG_WARNING("LEFT   x:" << corners[LEFT].x << " y: " << corners[LEFT].y);
+  //LOG_WARNING("RIGHT  x:" << corners[RIGHT].x << " y: " << corners[RIGHT].y);
+  //LOG_WARNING("height: " << height);
 
   // generate left boundary
   int* leftBoundary = new int[height];
-  //std::vector<cv::Point2d> leftPath;
-  //leftPath.push_back(corners[TOP]);
-  //leftPath.push_back(corners[LEFT]);
-  //leftPath.push_back(corners[BOTTOM]);
-  //GenerateBoundary(leftBoundary, leftPath, top, bottom, false);
+  std::vector<cv::Point2d> leftPath;
+  leftPath.push_back(corners[TOP]);
+  leftPath.push_back(corners[LEFT]);
+  leftPath.push_back(corners[BOTTOM]);
+  GenerateBoundary(leftBoundary, leftPath, top, false);
 
-  //// generate right boundary
-  //int* rightBoundary = new int[height];
-  //std::vector<cv::Point2d> rightPath;
-  //rightPath.push_back(corners[TOP]);
-  //rightPath.push_back(corners[RIGHT]);
-  //rightPath.push_back(corners[BOTTOM]);
-  //GenerateBoundary(rightBoundary, rightPath, top, bottom, true);
-  //// copy vtk->itk
+  // generate right boundary
+  int* rightBoundary = new int[height];
+  std::vector<cv::Point2d> rightPath;
+  rightPath.push_back(corners[TOP]);
+  rightPath.push_back(corners[RIGHT]);
+  rightPath.push_back(corners[BOTTOM]);
+  GenerateBoundary(rightBoundary, rightPath, top, true);
+
+  // copy vtk->itk
+  CopyToItkData(vtkDepthData, itkData, top, bottom, leftBoundary, rightBoundary, image);
 }
 
 //----------------------------------------------------------------------------
 void vtkPlusOpticalMarkerTracker::GenerateItkData(
   vtkSmartPointer<vtkPolyData> vtkDepthData,
   std::vector<itk::Point<double, 3>> &itkData,
-  std::vector<cv::Point2d> corners
-  /*for testing
+  std::vector<cv::Point2d> corners,
+  /*for testing*/
   unsigned int dim[],
-  cv::Mat image*/)
+  cv::Mat image)
 {
-  //LOG_WARNING("corners before:");
-  //for (int i = 0; i < 4; i++)
-  //{
-  //  LOG_WARNING("#" << i << " x: " << corners[i].x << " y: " << corners[i].y);
-  //}
-
   MARKER_ORIENTATION orientation = DetermineMarkerOrientation(corners);
-
-  //LOG_WARNING("corners after:");
-  //for (int i = 0; i < 4; i++)
-  //{
-  //  LOG_WARNING("#" << i << " x: " << corners[i].x << " y: " << corners[i].y);
-  //}
 
   switch (orientation)
   {
   case SKEW_LEFT:
-    GenerateSkewLeftItkData(vtkDepthData, itkData, corners);
+    GenerateSkewLeftItkData(vtkDepthData, itkData, corners, dim, image);
     return;
   case ROTATED:
-    GenerateRotatedItkData(vtkDepthData, itkData, corners);
+    GenerateRotatedItkData(vtkDepthData, itkData, corners, dim, image);
     return;
   case SKEW_RIGHT:
-    GenerateSkewRightItkData(vtkDepthData, itkData, corners);
+    GenerateSkewRightItkData(vtkDepthData, itkData, corners, dim, image);
     return;
+  }
+}
+
+//----------------------------------------------------------------------------
+double* vtkPlusOpticalMarkerTracker::GetXAxis(
+  vtkSmartPointer<vtkPolyData> vtkDepthData,
+  std::vector<cv::Point2d> corners,
+  cv::Mat image)
+{
+  cv::Point2d xBeginPx, xEndPx;
+
+  xBeginPx.x = round((float)(corners[0].x + corners[3].x)/2);
+  xBeginPx.y = round((float)(corners[0].y + corners[3].y)/2);
+  xEndPx.x = round((float)(corners[1].x + corners[2].x)/2);
+  xEndPx.y = round((float)(corners[1].y + corners[2].y)/2);
+
+  double* x_axis = new double[3];
+  x_axis[0] = 0;
+  x_axis[1] = 0;
+  x_axis[2] = 0;
+
+  // compute slope of x_axis in image
+  double mPx;
+  if (xBeginPx.y == xEndPx.y)
+  {
+    mPx = 0.0;
+  }
+  else
+  {
+    mPx = ((float)(xBeginPx.y - xEndPx.y)) / (xBeginPx.x- xEndPx.x);
+  }
+
+  vtkIdType ptId = 640 * xBeginPx.y + xBeginPx.x;
+  double* prevVtkPoint = new double[3];
+  vtkDepthData->GetPoint(ptId, prevVtkPoint);
+  int count = 0;
+
+  // find direction of x_axis in spatial coordinates
+  if (xBeginPx.x < xEndPx.x)
+  {
+    // x axis goes left of image to right
+    for (int xPx = xBeginPx.x + 1; xPx <= xEndPx.x; xPx++)
+    {
+      int yPx = xBeginPx.y + mPx*(xPx - xBeginPx.x);
+      // color in image for visualization
+      cv::Vec3b color = image.at<cv::Vec3b>(cv::Point(xPx, yPx));
+      color[0] = 0;
+      color[1] = 0;
+      color[2] = 255;
+      image.at<cv::Vec3b>(cv::Point(xPx, yPx)) = color;
+
+      vtkIdType ptId = 640 * yPx + xPx;
+      double vtkPoint[3];
+      vtkDepthData->GetPoint(ptId, vtkPoint);
+
+      if (vtkPoint[2] > 50 && vtkPoint[2] < 2000 && prevVtkPoint[2] > 50 && prevVtkPoint[2] < 2000)
+      {
+        x_axis[0] += vtkPoint[0] - prevVtkPoint[0];
+        x_axis[1] += vtkPoint[1] - prevVtkPoint[1];
+        x_axis[2] += vtkPoint[2] - prevVtkPoint[2];
+        count++;
+      }
+      prevVtkPoint = vtkPoint;
+    }
+  }
+  else
+  {
+    // x axis goes right of image to left
+    for (int xPx = xBeginPx.x - 1; xPx >= xEndPx.x; xPx--)
+    {
+      int yPx = xBeginPx.y + mPx*(xPx - xBeginPx.x);
+      // color in image for visualization
+      cv::Vec3b color = image.at<cv::Vec3b>(cv::Point(xPx, yPx));
+      color[0] = 0;
+      color[1] = 255;
+      color[2] = 0;
+      image.at<cv::Vec3b>(cv::Point(xPx, yPx)) = color;
+
+      vtkIdType ptId = 640 * yPx + xPx;
+      double vtkPoint[3];
+      vtkDepthData->GetPoint(ptId, vtkPoint);
+
+      if (vtkPoint[2] > 50 && vtkPoint[2] < 2000 && prevVtkPoint[2] > 50 && prevVtkPoint[2] < 2000)
+      {
+        x_axis[0] += vtkPoint[0] - prevVtkPoint[0];
+        x_axis[1] += vtkPoint[1] - prevVtkPoint[1];
+        x_axis[2] += vtkPoint[2] - prevVtkPoint[2];
+        count++;
+      }
+      prevVtkPoint = vtkPoint;
+    }
+
+    x_axis[0] /= count;
+    x_axis[1] /= count;
+    x_axis[2] /= count;
+  }
+
+  return x_axis;
+}
+
+//----------------------------------------------------------------------------
+cv::Point2d vtkPlusOpticalMarkerTracker::GetMarkerCenter(std::vector<cv::Point2d> corners) {
+  cv::Point2d center;
+  // slope of lines
+  // TODO: handle special case where corners have same x coordinate -> inf slope -> crash
+  double m02 = (corners[0].y - corners[2].y) / (corners[0].x - corners[2].x);
+  double m13 = (corners[1].y - corners[3].y) / (corners[1].x - corners[3].x);
+  // points on lines
+  int x0 = corners[0].x, y0 = corners[0].y;
+  int x1 = corners[1].x, y1 = corners[1].y;
+
+  float x_center = (m02*x0 - m13*x1 + y1 - y0) / (m02 - m13);
+  center.x = round(x_center);
+  center.y = round(m02*(x_center - x0) + y0);
+
+  //LOG_INFO("center x: " << center.x << "center y: " << center.y);
+
+  //LOG_INFO("0+2x: " << (corners[0].x + corners[2].x) / 2);
+  //LOG_INFO("0+2y: " << (corners[0].y + corners[2].y) / 2);
+  //LOG_INFO("1+3x: " << (corners[1].x + corners[3].x) / 2);
+  //LOG_INFO("1+3y: " << (corners[1].y + corners[3].y) / 2);
+
+  return center;
+}
+
+//----------------------------------------------------------------------------
+double* vtkPlusOpticalMarkerTracker::MarkerCenterImageToSpatial(vtkSmartPointer<vtkPolyData> vtkDepthData, cv::Point2d imageCenter, cv::Mat image)
+{
+  //cv::circle(image, markerImageCenter, 2, cv::Scalar(0, 0, 255), -1);
+  return new double[3];
+}
+
+//----------------------------------------------------------------------------
+inline void vtkPlusOpticalMarkerTracker::ComputePlaneTransform(
+  vtkSmartPointer<vtkMatrix4x4> transformMatrix,
+  double x_axis[],
+  double z_axis[],
+  double center[])
+{
+  vnl_matrix<double> CameraPoints(3, 3, 0.0);
+  vnl_matrix<double> MarkerPoints(3, 3, 0.0);
+
+  // camera x axis
+  CameraPoints.put(0, 0, 1);
+  CameraPoints.put(0, 1, 0);
+  CameraPoints.put(0, 2, 0);
+  // camera z axis
+  CameraPoints.put(1, 0, 0);
+  CameraPoints.put(1, 1, 0);
+  CameraPoints.put(1, 2, 1);
+  // camera origin
+  CameraPoints.put(2, 0, 1);
+  CameraPoints.put(2, 1, 0);
+  CameraPoints.put(2, 2, 0);
+
+  // marker x axis
+  MarkerPoints.put(0, 0, x_axis[0]);
+  MarkerPoints.put(0, 0, x_axis[1]);
+  MarkerPoints.put(0, 0, x_axis[2]);
+  // marker z axis (n)
+  MarkerPoints.put(0, 0, z_axis[0]);
+  MarkerPoints.put(0, 0, z_axis[1]);
+  MarkerPoints.put(0, 0, z_axis[2]);
+  // marker origin (center of mass of marker)
+  MarkerPoints.put(0, 0, 0);
+  MarkerPoints.put(0, 0, 0);
+  MarkerPoints.put(0, 0, 0);
+  //MarkerPoints.put(0, 0, center[0]);
+  //MarkerPoints.put(0, 0, center[1]);
+  //MarkerPoints.put(0, 0, center[2]);
+
+  vnl_svd<double> CameraToMarker(CameraPoints.transpose() * MarkerPoints);
+  vnl_matrix<double> V = CameraToMarker.V();
+  vnl_matrix<double> U = CameraToMarker.U();
+  vnl_matrix<double> Rotation = V * U.transpose();
+
+  // Make sure the determinant is positve (i.e. +1)
+  double determinant = vnl_determinant(Rotation);
+  if (determinant < 0)
+  {
+    // Switch the sign of the third column of V if the determinant is not +1
+    // This is the recommended approach from Huang et al. 1987
+    V.put(0, 2, -V.get(0, 2));
+    V.put(1, 2, -V.get(1, 2));
+    V.put(2, 2, -V.get(2, 2));
+    Rotation = V * U.transpose();
+  }
+
+  LOG_WARNING("ROTATION: ");
+  cout << Rotation;
+
+  //TODO: generate 4x4 transform here
+  for (int i = 0; i < 3; i++)
+  {
+    //transformMatrix->Identity();
   }
 }
 
 //----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
 {
-  LOG_INFO("----OMT BEGINS HERE----");
-  //TODO: refactor this to check for optical & depth data, or simply optical
-  if (this->InputChannels.size() != 2)
+  if (this->TrackingMethod == OPTICAL)
   {
-    LOG_ERROR("ImageProcessor device requires exactly 1 input stream (that contains video data). Check configuration.");
-    return PLUS_FAIL;
+    if (this->InputChannels.size() != 1)
+    {
+      LOG_ERROR("OpticalMarkerTracker device requires exactly 1 input stream (that contains video data). Check configuration.");
+      return PLUS_FAIL;
+    }
+  }
+  else if (this->TrackingMethod = OPTICAL_AND_DEPTH)
+  {
+    if (this->InputChannels.size() != 2)
+    {
+      LOG_ERROR("OpticalMarkerTracker device requires exactly 2 input streams (that contains video data and depth data). Check configuration.");
+      return PLUS_FAIL;
+    }
   }
 
-  // Get image to tracker transform from the tracker (only request 1 frame, the latest)
+  // check if data is ready
+  if (!this->InputChannels[CHANNEL_INDEX_VIDEO]->GetVideoDataAvailable())
+  {
+    LOG_TRACE("OpticalMarkerTracker is not tracking, video data is not available yet. Device ID: " << this->GetDeviceId());
+    return PLUS_SUCCESS;
+  }
+  if (!this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetBulkDataAvailable())
+  {
+    LOG_TRACE("OpticalMarkerTracker is not tracking, video data is not available yet. Device ID: " << this->GetDeviceId());
+    return PLUS_SUCCESS;
+  }
 
+  // get timestamp of frame to process from PolyData (as it is added to the buffers after video)
   double oldestTrackingTimestamp(0);
   if (this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetLatestTimestamp(oldestTrackingTimestamp) == PLUS_SUCCESS)
   {
@@ -531,72 +807,34 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     }
   }
 
-
-
-  if (!this->InputChannels[CHANNEL_INDEX_VIDEO]->GetVideoDataAvailable())
+  // grab tracked frames to process from buffer
+  PlusTrackedFrame trackedVideoFrame;
+  PlusTrackedFrame trackedPolyDataFrame;
+  if (this->TrackingMethod == OPTICAL || this->TrackingMethod == OPTICAL_AND_DEPTH)
   {
-    LOG_TRACE("Processed data is not generated, as no video data is available yet. Device ID: " << this->GetDeviceId());
-    return PLUS_SUCCESS;
+    // get optical video data
+    if (this->InputChannels[CHANNEL_INDEX_VIDEO]->GetTrackedFrame(trackedVideoFrame) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Error while getting latest tracked frame. Last recorded timestamp: " << std::fixed << this->LastProcessedInputDataTimestamp << ". Device ID: " << this->GetDeviceId());
+      this->LastProcessedInputDataTimestamp = vtkPlusAccurateTimer::GetSystemTime(); // forget about the past, try to add frames that are acquired from now on
+      return PLUS_FAIL;
+    }
+  }
+  if (this->TrackingMethod = OPTICAL_AND_DEPTH)
+  {
+    // get depth PolyData
+    if (this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetTrackedFrame(oldestTrackingTimestamp, trackedPolyDataFrame) != PLUS_SUCCESS)
+    {
+      LOG_ERROR("Error while getting latest tracked frame. Last recorded timestamp: " << std::fixed << this->LastProcessedInputDataTimestamp << ". Device ID: " << this->GetDeviceId());
+      this->LastProcessedInputDataTimestamp = vtkPlusAccurateTimer::GetSystemTime(); // forget about the past, try to add frames that are acquired from now on
+      return PLUS_FAIL;
+    }
   }
 
-  //double oldestTrackingTimestamp(0);
-  //if (this->InputChannels[CHANNEL_INDEX_VIDEO]->GetOldestTimestamp(oldestTrackingTimestamp) == PLUS_SUCCESS)
-  //{
-  //  if (this->LastProcessedInputDataTimestamp > oldestTrackingTimestamp)
-  //  {
-  //    LOG_INFO("Processed image generation started. No tracking data was available between " << this->LastProcessedInputDataTimestamp << "-" << oldestTrackingTimestamp <<
-  //      "sec, therefore no processed images were generated during this time period.");
-  //    this->LastProcessedInputDataTimestamp = oldestTrackingTimestamp;
-  //  }
-  //}
-
-  PlusTrackedFrame trackedFrame;
-  if (this->InputChannels[CHANNEL_INDEX_VIDEO]->GetTrackedFrame(trackedFrame) != PLUS_SUCCESS)
-  {
-    LOG_ERROR("Error while getting latest tracked frame. Last recorded timestamp: " << std::fixed << this->LastProcessedInputDataTimestamp << ". Device ID: " << this->GetDeviceId());
-    this->LastProcessedInputDataTimestamp = vtkPlusAccurateTimer::GetSystemTime(); // forget about the past, try to add frames that are acquired from now on
-    return PLUS_FAIL;
-  }
- 
-  PlusTrackedFrame polyDataTrackedFrame;
-  if (this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetTrackedFrame(oldestTrackingTimestamp, polyDataTrackedFrame) != PLUS_SUCCESS)
-  {
-    LOG_ERROR("Error while getting latest tracked frame. Last recorded oldestTrackingTimestamp: " << std::fixed << this->LastProcessedInputDataTimestamp << ". Device ID: " << this->GetDeviceId());
-    this->LastProcessedInputDataTimestamp = vtkPlusAccurateTimer::GetSystemTime(); // forget about the past, try to add frames that are acquired from now on
-    return PLUS_FAIL;
-  }
-
-
-  vtkPolyData* poly = polyDataTrackedFrame.GetPolyData();
-  if (poly != NULL)
-  {
-    //LOG_INFO("OMT verts: " << poly->GetNumberOfVerts());
-  }
-  else
-  {
-    LOG_INFO("NULL polydata");
-  }
-
-
-
-  //LOG_INFO("VIDEO TIME: " << trackedFrame.GetTimestamp());
-  //LOG_INFO("POLY TIME: " << polyDataTrackedFrame.GetTimestamp());
-  //poly->GetNumberOfVerts();
-
-  ////////vtksmartpointer<vtkpolydata> polydata = vtksmartpointer<vtkpolydata>::new();
-  //////////todo: read polydata from file (replace this by reading from buffers)
-  ////////ostringstream vtpfilename;
-  ////////vtpfilename << "poly" << framenumber << ".vtp";
-  ////////vtksmartpointer<vtkxmlpolydatareader> reader = vtksmartpointer<vtkxmlpolydatareader>::new();
-  ////////reader->setfilename(vtpfilename.str().c_str());
-  ////////reader->update();
-  ////////polydata = reader->getoutput();
-
-  ////TODO: for testing visaulize polydata
-
+  //TODO: for testing visaulize polydata
   if (false) {
     vtkSmartPointer<vtkPolyDataMapper> mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-    mapper->SetInputData(poly);
+    mapper->SetInputData(trackedPolyDataFrame.GetPolyData());
     vtkSmartPointer<vtkActor> actor = vtkSmartPointer<vtkActor>::New();
     actor->SetMapper(mapper);
     vtkSmartPointer<vtkRenderer> renderer = vtkSmartPointer<vtkRenderer>::New();
@@ -619,48 +857,35 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     renderWindowInteractor->Start();
   }
 
-
-/*
-
-
-
-
-
-
-
-
-
-
-  // get polydata from buffers
-  StreamBufferItem item;
-  //this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetStreamBufferitem
-
   // get dimensions & data
   FrameSizeType dim = trackedVideoFrame.GetFrameSize();
   PlusVideoFrame* frame = trackedVideoFrame.GetImageData();
 
   cv::Mat image(dim[1], dim[0], CV_8UC3);
+  cv::Mat temp(dim[1], dim[0], CV_8UC3);
 
-  
+  //TODO: Flip image so that it's input to openCV in the correct orientation
+  PlusVideoFrame *uprightOcvImage;
+  PlusVideoFrame::FlipInfoType flip;
+
   // Plus image uses RGB and OpenCV uses BGR, swapping is only necessary for colored markers
-  //PixelCodec::RgbBgrSwap(dim[0], dim[1], (unsigned char*)frame->GetScalarPointer(), image.data);
+  //PixelCodec::RgbBgrSwap(dim[0], dim[1], (unsigned char*)frame->GetScalarPointer(), temp.data);
   image.data = (unsigned char*)frame->GetScalarPointer();
-  //TODO: for testing only, pulling data from files
-  ////////ostringstream filename;
-  ////////filename << "img" << framenumber << ".png";
-  ////////image = cv::imread(filename.str());
-  ////////// end testing
+
+  vtkSmartPointer<vtkPolyData> markerPolyData = trackedPolyDataFrame.GetPolyData();
+
 
 
   // detect markers in frame
   MDetector.detect(image, markers);
-
+  const double unfilteredTimestamp = vtkPlusAccurateTimer::GetSystemTime();
   // iterate through tools updating tracking
-  for (std::vector<TrackedTool>::iterator toolIt = begin(this->Internal->Tools); toolIt != end(this->Internal->Tools); ++toolIt)
+  for (vector<TrackedTool>::iterator toolIt = Tools.begin(); toolIt != Tools.end(); ++toolIt)
   {
     bool toolInFrame = false;
-    const double unfilteredTimestamp = vtkPlusAccurateTimer::GetSystemTime();
-    for (std::vector<aruco::Marker>::iterator markerIt = begin(this->Internal->Markers); markerIt != end(this->Internal->Markers); ++markerIt)
+    // moved outside for loop for testing
+    //const double unfilteredTimestamp = vtkPlusAccurateTimer::GetSystemTime();
+    for (vector<aruco::Marker>::iterator markerIt = markers.begin(); markerIt != markers.end(); ++markerIt)
     {
       if (toolIt->MarkerId == markerIt->id) {
         //marker is in frame
@@ -670,57 +895,100 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
         std::vector<cv::Point2d> corners;
         corners = markerIt->getCornersPx();
 
-        vtkSmartPointer<vtkPolyData> polydata;
+        // get center of marker
+        cv::Point2d markerImageCenter = GetMarkerCenter(corners);
+        double* markerSpatialCenter = MarkerCenterImageToSpatial(markerPolyData, markerImageCenter, image);
+
+        // get x_axis of marker
+        double* xAxis = GetXAxis(markerPolyData, corners, image);
+
+        LOG_WARNING("x_axis x: " << xAxis[0] << " y: " << xAxis[1] << " z: " << xAxis[2]);
+
         // copy data from inside the marker into data structure for RANSAC plane algorithm
         std::vector<itk::Point<double, 3>> itkPlane;
-        std::vector<cv::Point2d> corners_duplicate = corners;
-        GenerateItkData(polydata, itkPlane, corners_duplicate);
+        GenerateItkData(markerPolyData, itkPlane, corners, dim, image);
 
-        //TODO: for testing generate the vtkPolyData plane and show to user
-        //end testing
-
+        cv::circle(image, corners[0], 2, cv::Scalar(0, 0, 255), -1);
+        cv::circle(image, corners[1], 2, cv::Scalar(255, 0, 0), -1);
 
         // find plane normal and distance using RANSAC
-        std::vector<double> planeParameters;
-        double desiredProbablilityForNoOutluiers = 0.95;
-        double maxDistanceFromPlane = 2;
+        std::vector<double> ransacParameterResult;
         typedef itk::PlaneParametersEstimator<3> PlaneEstimatorType;
         typedef itk::RANSAC<itk::Point<double, 3>, double> RANSACType;
 
+        //create and initialize the parameter estimator
+        double maximalDistanceFromPlane = 0.5;
         PlaneEstimatorType::Pointer planeEstimator = PlaneEstimatorType::New();
-        //planeEstimator->SetDelta(maxDistanceFromPlane);
-        //planeEstimator->LeastSquaresEstimate(itkPlane, planeParameters);
-        //if (planeParameters.empty())
-        //  std::cout << "Least squares estimate failed, degenerate configuration?\n";
-        //else
+        planeEstimator->SetDelta(maximalDistanceFromPlane);
+        planeEstimator->LeastSquaresEstimate(itkPlane, ransacParameterResult);
+
+        //create and initialize the RANSAC algorithm
+        double desiredProbabilityForNoOutliers = 0.90;
+        RANSACType::Pointer ransacEstimator = RANSACType::New();
+
+        try
+        {
+          ransacEstimator->SetData(itkPlane);
+        }
+        catch (std::exception& e)
+        {
+          LOG_DEBUG(e.what());
+          return PLUS_SUCCESS;
+        }
+
+        try
+        {
+          ransacEstimator->SetParametersEstimator(planeEstimator.GetPointer());
+        }
+        catch (std::exception& e)
+        {
+          LOG_DEBUG(e.what());
+          return PLUS_SUCCESS;
+        }
+
+        // RANSAC drops the frame rate down to 2fps from 20... Is it worth it?
+
+        //try
         //{
-        //  std::cout << "Least squares hyper(plane) parameters: [n,a]\n\t [ ";
-        //  int i;
-        //  for (i = 0; i < (2 * 3 - 1); i++)
-        //    std::cout << planeParameters[i] << ", ";
-        //  std::cout << planeParameters[i] << "]\n\n";
-        //  //cos(theta), theta is the angle between the two unit normals
+        //  ransacEstimator->Compute(ransacParameterResult, desiredProbabilityForNoOutliers);
+        //}
+        //catch (std::exception& e)
+        //{
+        //  LOG_DEBUG(e.what());
+        //  return PLUS_SUCCESS;
         //}
 
-
-        //TODO: for testing draw plane point & normal on RGB image
-        //end testing
-
-        //TODO: for testing draw corners and normals on image
-        cv::Point_<int> corner;
-        for (int i = 0; i < 4; i++)
+        // print results of least squares / RANSAC plane fit
+        if (ransacParameterResult.empty())
         {
-          corner.x = corners[i].x;
-          corner.y = corners[i].y;
-          cv::circle(image, corner, 2, cv::Scalar(0,0,255), -1);
+          LOG_INFO("Unable to fit line through points with least squares estimation");
         }
-       // cv::imshow("image", image);
-       // cv::waitKey();
-        //end testing
+        else
+        {
+          LOG_INFO("Least squares line parameters (n, a):");
+          for (unsigned int i = 0; i < (2 * 3); i++)
+          {
+            LOG_INFO(" RANSAC parameter: " << ransacParameterResult[i]);
+          }
+        }
 
+        double zAxis[3];
+        zAxis[0] = ransacParameterResult[0];
+        zAxis[1] = ransacParameterResult[1];
+        zAxis[2] = ransacParameterResult[2];
 
+        // center is currently computed using the center of mass of the plane from least squares,
+        // this could be updated to be the intersection of a line from (0,0,0) to the plane center
+        double center[3];
+        center[0] = ransacParameterResult[3];
+        center[1] = ransacParameterResult[4];
+        center[2] = ransacParameterResult[5];
 
+        // compute marker transform based on depth sensor data
+        vtkSmartPointer<vtkMatrix4x4> depthTransform;
+        ComputePlaneTransform(depthTransform, xAxis, zAxis, center);
 
+        cout << depthTransform;
         if (toolIt->MarkerPoseTracker.estimatePose(*markerIt, CP, toolIt->MarkerSizeMm / MM_PER_M, 4))
         {
           // pose successfully estimated, update transform
@@ -744,19 +1012,23 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     }
   }
 
+  // for testing
+  PixelCodec::ConvertToBmp24(PixelCodec::ComponentOrder_RGB, PixelCodec::PixelEncoding::PixelEncoding_BGR24, dim[0], dim[1], image.data, (unsigned char*)frame->GetScalarPointer());
+  vtkPlusDataSource* videoSource;
+  if (GetVideoSource("Optical", videoSource) != PLUS_SUCCESS)
+  {
+    LOG_ERROR("OMT video source failed");
+  }
 
+  videoSource->SetPixelType(VTK_UNSIGNED_CHAR);
+  videoSource->SetImageType(US_IMG_RGB_COLOR);
+  videoSource->SetNumberOfScalarComponents(3);
+  videoSource->SetInputFrameSize(dim);
 
-
-
-
-
-  */
-
-
-
+  videoSource->AddItem(frame, FrameNumber, unfilteredTimestamp);
 
   //TODO: add logging for frame rate
-  
+  this->Modified();
   this->FrameNumber++;
 
   return PLUS_SUCCESS;

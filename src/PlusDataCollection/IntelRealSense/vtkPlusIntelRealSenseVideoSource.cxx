@@ -35,7 +35,7 @@ See License.txt for details.
 
 #include "opencv2/highgui.hpp"
 
-#define DEFAULT_FRAME_RATE            30
+#define DEFAULT_FRAME_RATE            60
 #define SR300_MAX_FRAME_RATE          30    // for optical && depth
 #define SR300_MAX_OPTICAL_WIDTH       1920
 #define SR300_MAX_OPTICAL_HEIGHT      1080
@@ -62,8 +62,6 @@ public:
     PlusVideoFrame PlusFrame;
     vtkPlusDataSource* PlusSource;
   };
-
-  OUTPUT_VIDEO_TYPE OutputVideoType;
   
   RSVideo* ColorStream = new RSVideo;
   RSVideo* DepthStream = new RSVideo;
@@ -153,7 +151,7 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
   
   // Update optical frame and add to buffer
   //TODO: Re-implement PlusStatus functionality on the buffer frame additions so that update fails if image cannot be added
-  if (this->Internal->OutputVideoType == OPTICAL || this->Internal->OutputVideoType == OPTICAL_AND_DEPTH)
+  if (this->OutputType == OPTICAL || this->OutputType == OPTICAL_AND_DEPTH)
   {
     //RS::Image* imageColor = sample->color;
     this->Internal->ColorImage = sample->color;
@@ -167,14 +165,15 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
       dataColor.planes[0],
       (unsigned char*)this->Internal->ColorStream->PlusFrame.GetScalarPointer());
       
-    this->Internal->ColorStream->PlusSource->AddItem(&this->Internal->ColorStream->PlusFrame,
-      this->FrameNumber, unfilteredTimestamp);
+    
 
     this->Internal->ColorImage->ReleaseAccess(&dataColor);
   }
   
+  vtkSmartPointer<vtkPolyData> polydata = vtkSmartPointer<vtkPolyData>::New();
+
   // If wanted, update depth frame and add to buffer
-  if (this->Internal->OutputVideoType == OPTICAL_AND_DEPTH)
+  if (this->OutputType == OPTICAL_AND_DEPTH)
   {
     this->Internal->DepthImage = sample->depth;
     RS::ImageData dataDepth;
@@ -204,21 +203,34 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
       }
     }
 
-    vtkSmartPointer<vtkPolyData> polydata = vtkSmartPointer<vtkPolyData>::New();
+
     polydata->SetPoints(points);
     polydata->SetVerts(vertices);
     
-    this->Internal->DepthStream->PlusSource->AddItem(polydata, this->FrameNumber, unfilteredTimestamp);
+    
 
     depthImageMappedToColor->Release();
     this->Internal->Projection->Release();
     this->Internal->DepthImage->ReleaseAccess(&dataDepth);
   }
   
+  // Write data to buffers
+  if (this->OutputType == OPTICAL || this->OutputType == OPTICAL_AND_DEPTH)
+  {
+    this->Internal->ColorStream->PlusSource->AddItem(&this->Internal->ColorStream->PlusFrame,
+      this->FrameNumber, unfilteredTimestamp);
+  }
+  
+  if (this->OutputType == OPTICAL_AND_DEPTH)
+  {
+    this->Internal->DepthStream->PlusSource->AddItem(polydata, this->FrameNumber, unfilteredTimestamp);
+  }
+  
+  
+
+
   this->Modified();
   this->FrameNumber++;
-  // TODO: add code that logs frame rate
-  LOG_INFO("Frame: " << FrameNumber);
   this->Internal->SenseManager->ReleaseFrame();
   return PLUS_SUCCESS;
 }
@@ -232,11 +244,11 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::ReadConfiguration( vtkXMLDataElemen
   // set OutputVideoType based on number of DataSource elements
   if ((int)dataSourcesElement->GetNumberOfNestedElements() == 1)
   {
-    this->Internal->OutputVideoType = OPTICAL;
+    this->OutputType = OPTICAL;
   }
   else if ((int)dataSourcesElement->GetNumberOfNestedElements() == 2)
   {
-    this->Internal->OutputVideoType = OPTICAL_AND_DEPTH;
+    this->OutputType = OPTICAL_AND_DEPTH;
   }
   else
   {
@@ -368,6 +380,8 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalConnect()
     return PLUS_FAIL;
   }
   
+  //this->Internal->Session->SetCoordinateSystem(RS::CoordinateSystem::COORDINATE_SYSTEM_REAR_OPENCV);
+
   this->Internal->SenseManager = this->Internal->Session->CreateSenseManager();
   if (!this->Internal->SenseManager)
   {
@@ -376,7 +390,7 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalConnect()
   }
   
   // enable streams based on OPTICAL / OPTICAL_AND_DEPTH
-  if (this->Internal->OutputVideoType == OPTICAL || this->Internal->OutputVideoType == OPTICAL_AND_DEPTH)
+  if (this->OutputType == OPTICAL || this->OutputType == OPTICAL_AND_DEPTH)
   {
     // configure RS optical stream
     this->Internal->SenseManager->EnableStream( RS::StreamType::STREAM_TYPE_COLOR,
@@ -402,7 +416,7 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalConnect()
     this->Internal->ColorStream->PlusFrame.AllocateFrame(this->Internal->ColorStream->FrameSizePx, VTK_UNSIGNED_CHAR, 3);
   }
 
-  if (this->Internal->OutputVideoType == OPTICAL_AND_DEPTH)
+  if (this->OutputType == OPTICAL_AND_DEPTH)
   {
     this->Internal->SenseManager->EnableStream(RS::StreamType::STREAM_TYPE_DEPTH,
       this->Internal->DepthStream->FrameSizePx[0],
@@ -423,7 +437,6 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalConnect()
   
   this->Internal->CaptureManager = this->Internal->SenseManager->QueryCaptureManager();
   this->Internal->Device = this->Internal->CaptureManager->QueryDevice();
-  cout << "Depth range: " << this->Internal->Device->QueryDepthSensorRange().min << " to " << this->Internal->Device->QueryDepthSensorRange().max;
   int numDepthPixels = this->Internal->DepthStream->FrameSizePx[0] * this->Internal->DepthStream->FrameSizePx[1];
   this->Internal->depthMap = new RS::Point3DF32[numDepthPixels];
 

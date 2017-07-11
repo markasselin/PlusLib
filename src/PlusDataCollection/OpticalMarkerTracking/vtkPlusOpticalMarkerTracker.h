@@ -27,6 +27,7 @@ class vtkMatrix4x4;
 class vtkPlusDataCollectionExport vtkPlusOpticalMarkerTracker : public vtkPlusDevice
 {
 public:
+
   /*! Defines whether or not depth stream is used. */
   enum TRACKING_METHOD
   {
@@ -122,8 +123,6 @@ private:
   // TODO: add error checking
   void BuildTransformMatrix(vtkSmartPointer<vtkMatrix4x4> transformMatrix, cv::Mat Rvec, cv::Mat Tvec);
 
- 
-
   /*!  */
   std::string CameraCalibrationFile;
 
@@ -162,7 +161,15 @@ private:
   /*
   *
   */
-  void CopyToItkData(int top, int bottom, int *leftBoundary, int *rightBoundary);
+  void vtkPlusOpticalMarkerTracker::CopyToItkData(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<itk::Point<double, 3>> &itkData,
+    int top,
+    int bottom,
+    int *leftBoundary,
+    int *rightBoundary,
+    cv::Mat image
+  );
 
   /*
    * Computes the slope of the line x=my+b between corners 1 & 2.
@@ -173,7 +180,7 @@ private:
   /*
    *
    */
-  void GenerateBoundary(int* boundary, std::vector<cv::Point2d> corners, int top, int bottom, bool isRight);
+  void GenerateBoundary(int* boundary, std::vector<cv::Point2d> corners, int top, bool isRight);
 
   // /*
   // *
@@ -193,10 +200,10 @@ private:
   void GenerateSkewLeftItkData(
     vtkSmartPointer<vtkPolyData> vtkDepthData,
     std::vector<itk::Point<double, 3>> &itkData,
-    std::vector<cv::Point2d> corners
-    /*for testing
+    std::vector<cv::Point2d> corners,
+    /*for testing*/
     unsigned int dim[],
-    cv::Mat image*/
+    cv::Mat image
   );
 
   /*
@@ -205,10 +212,10 @@ private:
   void GenerateSkewRightItkData(
     vtkSmartPointer<vtkPolyData> vtkDepthData,
     std::vector<itk::Point<double, 3>> &itkData,
-    std::vector<cv::Point2d> corners
-    /*for testing
+    std::vector<cv::Point2d> corners,
+    /*for testing*/
     unsigned int dim[],
-    cv::Mat image*/
+    cv::Mat image
   );
 
   /*
@@ -217,10 +224,10 @@ private:
   void GenerateRotatedItkData(
     vtkSmartPointer<vtkPolyData> vtkDepthData,
     std::vector<itk::Point<double, 3>> &itkData,
-    std::vector<cv::Point2d> corners
-    /*for testing
+    std::vector<cv::Point2d> corners,
+    /*for testing*/
     unsigned int dim[],
-    cv::Mat image*/
+    cv::Mat image
   );
 
   /*
@@ -229,15 +236,27 @@ private:
   void GenerateItkData(
     vtkSmartPointer<vtkPolyData> vtkDepthData,
     std::vector<itk::Point<double, 3>> &itkData,
-    std::vector<cv::Point2d> corners
-    /*for testing
+    std::vector<cv::Point2d> corners,
+    /*for testing*/
     unsigned int dim[],
-    cv::Mat image*/
+    cv::Mat image
   );
+  
+  void ComputePlaneTransform(
+    vtkSmartPointer<vtkMatrix4x4> transformMatrix,
+    double x_axis[],
+    double z_axis[],
+    double center[]);
 
-  // being replaced
-  void GenerateItkMarkerPlane(vtkSmartPointer<vtkPolyData> vtkDepthData, std::vector<itk::Point<double, 3>> &itkPlane, std::vector<cv::Point2d> corners, int dim[], cv::Mat image);
+  double* GetXAxis(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<cv::Point2d> corners,
+    cv::Mat image);
 
+  /* Computes center of marker by finding the intersection of lines
+     drawn between opposing corners */
+  cv::Point2d GetMarkerCenter(std::vector<cv::Point2d> corners);
+
+  double* MarkerCenterImageToSpatial(vtkSmartPointer<vtkPolyData> vtkDepthData, cv::Point2d imageCenter, cv::Mat image);
 };
-
 #endif

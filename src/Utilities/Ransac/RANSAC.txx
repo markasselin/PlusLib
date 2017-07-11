@@ -1,6 +1,11 @@
 #ifndef _RANSAC_TXX_
 #define _RANSAC_TXX_
 
+// vtkMultiThreader::ThreadInfo
+// TODO: check how to save and restore using pragma push/pop?
+#define ThreadInfoStructOld ThreadInfoStruct
+#undef ThreadInfoStruct
+
 namespace itk
 {
 
@@ -307,3 +312,6 @@ unsigned int RANSAC<T,S>::Choose(unsigned int n, unsigned int m)
 } // end namespace itk
 
 #endif //_RANSAC_TXX_
+
+#define ThreadInfoStruct ThreadInfoStructOld
+#undef ThreadInfoStructOld

@@ -21,7 +21,7 @@ class vtkPlusDataCollectionExport vtkPlusIntelRealSenseVideoSource : public vtkP
 {
 public:
   /*! Defines whether or not depth stream is used. */
-  enum OUTPUT_VIDEO_TYPE
+  enum OUTPUT_TYPE
   {
     OPTICAL,
     OPTICAL_AND_DEPTH
@@ -97,6 +97,8 @@ private:
   vtkPlusIntelRealSenseVideoSource(const vtkPlusIntelRealSenseVideoSource&);
   void operator=(const vtkPlusIntelRealSenseVideoSource&);
   
+  OUTPUT_TYPE OutputType;
+
 };
 
 #endif
