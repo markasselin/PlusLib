@@ -137,11 +137,16 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalStopRecording()
 PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
 {
   // wait until both optical and depth frames are ready
-  if (this->Internal->SenseManager->AcquireFrame(true) < RS::Status::STATUS_NO_ERROR)
+  LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate started");
+  RS::Status acquireFrameStatus = this->Internal->SenseManager->AcquireFrame(true, 1000);
+  if (acquireFrameStatus < RS::Status::STATUS_NO_ERROR)
   {
-    return PLUS_SUCCESS;
+    // TODO: show human-readable error message
+    LOG_ERROR("vtkPlusIntelRealSenseVideoSource::InternalUpdate AcquireFrame error: "<< acquireFrameStatus);
+    return PLUS_FAIL;
   }
 
+  LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before QuerySample");
   // get frame from RealSense
   RS::Capture::Sample *sample = this->Internal->SenseManager->QuerySample();
 
@@ -156,6 +161,7 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
     //RS::Image* imageColor = sample->color;
     this->Internal->ColorImage = sample->color;
     RS::ImageData dataColor;
+    LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before ColorImage->AcquireAccess");
     this->Internal->ColorImage->AcquireAccess(RS::ImageAccess::ACCESS_READ, RS::PixelFormat::PIXEL_FORMAT_RGB, &dataColor);
     
     PixelCodec::ConvertToBmp24(PixelCodec::ComponentOrder_RGB,
@@ -166,7 +172,7 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
       (unsigned char*)this->Internal->ColorStream->PlusFrame.GetScalarPointer());
       
     
-
+    LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before ColorImage->ReleaseAccess");
     this->Internal->ColorImage->ReleaseAccess(&dataColor);
   }
   
@@ -177,8 +183,10 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
   {
     this->Internal->DepthImage = sample->depth;
     RS::ImageData dataDepth;
+    LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before DepthImage->AcquireAccess");
     this->Internal->DepthImage->AcquireAccess(RS::ImageAccess::ACCESS_READ, RS::PixelFormat::PIXEL_FORMAT_DEPTH, &dataDepth);
 
+    LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before Device->CreateProjection");
     this->Internal->Projection = this->Internal->Device->CreateProjection();
     
     RS::Image* depthImageMappedToColor = this->Internal->Projection->CreateDepthImageMappedToColor(
@@ -208,17 +216,19 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
     polydata->SetVerts(vertices);
     
     
-
+    LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before projection releases");
     depthImageMappedToColor->Release();
     this->Internal->Projection->Release();
     this->Internal->DepthImage->ReleaseAccess(&dataDepth);
   }
   
+  
+  LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before addItem");
   // Write data to buffers
   if (this->OutputType == OPTICAL || this->OutputType == OPTICAL_AND_DEPTH)
   {
     this->Internal->ColorStream->PlusSource->AddItem(&this->Internal->ColorStream->PlusFrame,
-      this->FrameNumber, unfilteredTimestamp);
+    this->FrameNumber, unfilteredTimestamp);
   }
   
   if (this->OutputType == OPTICAL_AND_DEPTH)
@@ -231,7 +241,9 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
 
   this->Modified();
   this->FrameNumber++;
+  LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before SenseManager->ReleaseFrame");
   this->Internal->SenseManager->ReleaseFrame();
+  LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate completed");
   return PLUS_SUCCESS;
 }
 

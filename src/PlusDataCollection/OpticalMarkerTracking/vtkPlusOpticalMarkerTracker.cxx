@@ -23,8 +23,7 @@ See License.txt for details.
 #include "RANSAC.h"
 #include "ParametersEstimator.h"
 #include "PlaneParametersEstimator.h"
-
-
+#include "vnl_cross.h"
 
 // aruco
 #include "dictionary.h"
@@ -49,6 +48,8 @@ static const int CHANNEL_INDEX_VIDEO = 0;
 static const int CHANNEL_INDEX_POLYDATA = 1;
 static const int LEFT_BOUNDARY = false;
 static const int RIGHT_BOUNDARY = true;
+static const double PI = 3.14159265358979323846;  /* pi from Math.h */
+
 vtkStandardNewMacro(vtkPlusOpticalMarkerTracker);
 //----------------------------------------------------------------------------
 vtkPlusOpticalMarkerTracker::TrackedTool::TrackedTool(int MarkerId, float MarkerSizeMm, std::string ToolSourceId)
@@ -252,11 +253,9 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalStopRecording()
 }
 
 //----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::BuildTransformMatrix(vtkSmartPointer<vtkMatrix4x4> transformMatrix, cv::Mat Rvec, cv::Mat Tvec)
+void vtkPlusOpticalMarkerTracker::BuildTransformMatrix(vtkSmartPointer<vtkMatrix4x4> transformMatrix, cv::Mat Rmat, cv::Mat Tvec)
 {
   transformMatrix->Identity();
-  cv::Mat Rmat(3, 3, CV_32FC1);
-  cv::Rodrigues(Rvec, Rmat);
 
   for (int x = 0; x <= 2; x++)
   {
@@ -698,69 +697,131 @@ double* vtkPlusOpticalMarkerTracker::MarkerCenterImageToSpatial(vtkSmartPointer<
 }
 
 //----------------------------------------------------------------------------
-inline void vtkPlusOpticalMarkerTracker::ComputePlaneTransform(
-  vtkSmartPointer<vtkMatrix4x4> transformMatrix,
+float vtkPlusOpticalMarkerTracker::VectorAngleDeg(vnl_vector<double> xAxis, vnl_vector<double> zAxis)
+{
+  float dotProduct = xAxis(0)*zAxis(0) + xAxis(1)*zAxis(1) + xAxis(2)*zAxis(2);
+  return abs(acos(dotProduct) * 180 / PI); 
+}
+
+//----------------------------------------------------------------------------
+/*inline*/ void vtkPlusOpticalMarkerTracker::ComputePlaneTransform(
+  vtkSmartPointer<vtkMatrix4x4> MarkerToDepthCamera,
   double x_axis[],
   double z_axis[],
   double center[])
 {
-  vnl_matrix<double> CameraPoints(3, 3, 0.0);
-  vnl_matrix<double> MarkerPoints(3, 3, 0.0);
+  //vnl_matrix<double> CameraPoints(3, 3, 0.0);
+  //vnl_matrix<double> MarkerPoints(3, 3, 0.0);
+  // TODO: add homogenous coordinate to all raw array vectors
+  double z_expected[4] = { 0, 0, -1, 0 };
+  z_axis[1] = -z_axis[1]; // left-handed to right-handed coord sys conversion
+  float ZtoZAngle = vtkMath::Dot(z_expected, z_axis);
+  LOG_INFO("ZtoZangle: " << ZtoZAngle);
+  if (ZtoZAngle < 0)
+  {
+    // normal is pointing towards back of marker, flip it, as below
+    z_axis[0] *= -1;
+    z_axis[1] *= -1;
+    z_axis[2] *= -1;
+    z_axis[3] *= -1; // does the homogenous coordinate need to be flipped?
+  }
+  vnl_vector<double> xGuess(3, 3, x_axis);
+  vnl_vector<double> zAxis(3, 3, z_axis);
+  xGuess.normalize();
+  zAxis.normalize();
 
+  double x_theoretical[3] = { 1, 0, 0 };
+  vnl_vector<double> xTheoretical(3, 3, x_theoretical);
+  double y_theoretical[3] = { 0, 1, 0 };
+  vnl_vector<double> yTheoretical(3, 3, y_theoretical);
+
+  vnl_vector<double> yAxis;
+  vnl_vector<double> xAxis;
+
+  LOG_ERROR(VectorAngleDeg(xGuess, zAxis));
+  if (VectorAngleDeg(xGuess, zAxis) > 10)
+  {
+    LOG_ERROR("Using x_axis from aruco");
+    yAxis = vnl_cross_3d(zAxis, xGuess);
+    xAxis = vnl_cross_3d(yAxis, zAxis);
+  }
+  else if (VectorAngleDeg(xTheoretical, zAxis) > 10)
+  {
+    LOG_ERROR("using theoretical x_axis");
+    yAxis = vnl_cross_3d(zAxis, xTheoretical);
+    xAxis = vnl_cross_3d(yAxis, zAxis);
+  }
+  else
+  {
+    LOG_ERROR("Using theoretical y_axis as perpendicular to Z");
+    xAxis = vnl_cross_3d(yTheoretical, zAxis);
+    yAxis = vnl_cross_3d(zAxis, xAxis);
+  }
+
+  vnl_matrix<double> Rotation(3, 3);
+  Rotation.set_column(0, xAxis);
+  Rotation.set_column(1, yAxis);
+  Rotation.set_column(2, zAxis);
+  /*
   // camera x axis
   CameraPoints.put(0, 0, 1);
   CameraPoints.put(0, 1, 0);
   CameraPoints.put(0, 2, 0);
   // camera z axis
   CameraPoints.put(1, 0, 0);
-  CameraPoints.put(1, 1, 0);
-  CameraPoints.put(1, 2, 1);
+  CameraPoints.put(1, 1, 1);
+  CameraPoints.put(1, 2, 0);
   // camera origin
-  CameraPoints.put(2, 0, 1);
+  CameraPoints.put(2, 0, 0);
   CameraPoints.put(2, 1, 0);
-  CameraPoints.put(2, 2, 0);
+  CameraPoints.put(2, 2, 1);
 
   // marker x axis
-  MarkerPoints.put(0, 0, x_axis[0]);
-  MarkerPoints.put(0, 0, x_axis[1]);
-  MarkerPoints.put(0, 0, x_axis[2]);
+  MarkerPoints.put(0, 0, xAxis(0));
+  MarkerPoints.put(0, 1, xAxis(1));
+  MarkerPoints.put(0, 2, xAxis(2));
   // marker z axis (n)
-  MarkerPoints.put(0, 0, z_axis[0]);
-  MarkerPoints.put(0, 0, z_axis[1]);
-  MarkerPoints.put(0, 0, z_axis[2]);
+  MarkerPoints.put(1, 0, yAxis(0));
+  MarkerPoints.put(1, 1, yAxis(1));
+  MarkerPoints.put(1, 2, yAxis(2));
+
   // marker origin (center of mass of marker)
-  MarkerPoints.put(0, 0, 0);
-  MarkerPoints.put(0, 0, 0);
-  MarkerPoints.put(0, 0, 0);
-  //MarkerPoints.put(0, 0, center[0]);
-  //MarkerPoints.put(0, 0, center[1]);
-  //MarkerPoints.put(0, 0, center[2]);
+  MarkerPoints.put(2, 0, zAxis(0));
+  MarkerPoints.put(2, 1, zAxis(1));
+  MarkerPoints.put(2, 2, zAxis(2));
+
+  //MarkerPoints.put(2, 0, center[0]);
+  //MarkerPoints.put(2, 1, center[1]);
+  //MarkerPoints.put(2, 2, center[2]);
 
   vnl_svd<double> CameraToMarker(CameraPoints.transpose() * MarkerPoints);
   vnl_matrix<double> V = CameraToMarker.V();
   vnl_matrix<double> U = CameraToMarker.U();
   vnl_matrix<double> Rotation = V * U.transpose();
 
-  // Make sure the determinant is positve (i.e. +1)
-  double determinant = vnl_determinant(Rotation);
-  if (determinant < 0)
-  {
-    // Switch the sign of the third column of V if the determinant is not +1
-    // This is the recommended approach from Huang et al. 1987
-    V.put(0, 2, -V.get(0, 2));
-    V.put(1, 2, -V.get(1, 2));
-    V.put(2, 2, -V.get(2, 2));
-    Rotation = V * U.transpose();
-  }
-
   LOG_WARNING("ROTATION: ");
   cout << Rotation;
-
+  */
   //TODO: generate 4x4 transform here
-  for (int i = 0; i < 3; i++)
+  MarkerToDepthCamera->Identity();
+  for (int row = 0; row <= 2; row++)
   {
-    //transformMatrix->Identity();
+    
+    for (int col = 0; col <= 2; col++)
+      MarkerToDepthCamera->SetElement(row, col, Rotation(row, col));
   }
+  MarkerToDepthCamera->SetElement(0, 3, center[0]);
+  MarkerToDepthCamera->SetElement(1, 3, -center[1]);
+  MarkerToDepthCamera->SetElement(2, 3, center[2]);
+
+  vtkSmartPointer<vtkMatrix4x4> DepthAxisToPlusTrackerAxis = vtkSmartPointer<vtkMatrix4x4>::New();
+  DepthAxisToPlusTrackerAxis->Zero();
+  DepthAxisToPlusTrackerAxis->SetElement(0, 0, 1);
+  DepthAxisToPlusTrackerAxis->SetElement(1, 1, 1);
+  DepthAxisToPlusTrackerAxis->SetElement(2, 2, 1);
+  DepthAxisToPlusTrackerAxis->SetElement(3, 3, 1);
+
+  //vtkMatrix4x4::Multiply4x4(DepthAxisToPlusTrackerAxis, MarkerToDepthCamera, MarkerToDepthCamera);
 }
 
 //----------------------------------------------------------------------------
@@ -882,120 +943,126 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
   // iterate through tools updating tracking
   for (vector<TrackedTool>::iterator toolIt = Tools.begin(); toolIt != Tools.end(); ++toolIt)
   {
+    // for SPIE 2017 to output both depth and optical transforms simultaneously
+    // ignores depth named transforms
+    if (toolIt->ToolSourceId.find("Depth") != string::npos)
+    {
+      continue;
+    }
+
     bool toolInFrame = false;
-    // moved outside for loop for testing
-    //const double unfilteredTimestamp = vtkPlusAccurateTimer::GetSystemTime();
     for (vector<aruco::Marker>::iterator markerIt = markers.begin(); markerIt != markers.end(); ++markerIt)
     {
       if (toolIt->MarkerId == markerIt->id) {
         //marker is in frame
         toolInFrame = true;
 
-        // get marker corners
-        std::vector<cv::Point2d> corners;
-        corners = markerIt->getCornersPx();
-
-        // get center of marker
-        cv::Point2d markerImageCenter = GetMarkerCenter(corners);
-        double* markerSpatialCenter = MarkerCenterImageToSpatial(markerPolyData, markerImageCenter, image);
-
-        // get x_axis of marker
-        double* xAxis = GetXAxis(markerPolyData, corners, image);
-
-        LOG_WARNING("x_axis x: " << xAxis[0] << " y: " << xAxis[1] << " z: " << xAxis[2]);
-
-        // copy data from inside the marker into data structure for RANSAC plane algorithm
-        std::vector<itk::Point<double, 3>> itkPlane;
-        GenerateItkData(markerPolyData, itkPlane, corners, dim, image);
-
-        cv::circle(image, corners[0], 2, cv::Scalar(0, 0, 255), -1);
-        cv::circle(image, corners[1], 2, cv::Scalar(255, 0, 0), -1);
-
-        // find plane normal and distance using RANSAC
-        std::vector<double> ransacParameterResult;
-        typedef itk::PlaneParametersEstimator<3> PlaneEstimatorType;
-        typedef itk::RANSAC<itk::Point<double, 3>, double> RANSACType;
-
-        //create and initialize the parameter estimator
-        double maximalDistanceFromPlane = 0.5;
-        PlaneEstimatorType::Pointer planeEstimator = PlaneEstimatorType::New();
-        planeEstimator->SetDelta(maximalDistanceFromPlane);
-        planeEstimator->LeastSquaresEstimate(itkPlane, ransacParameterResult);
-
-        //create and initialize the RANSAC algorithm
-        double desiredProbabilityForNoOutliers = 0.90;
-        RANSACType::Pointer ransacEstimator = RANSACType::New();
-
-        try
-        {
-          ransacEstimator->SetData(itkPlane);
-        }
-        catch (std::exception& e)
-        {
-          LOG_DEBUG(e.what());
-          return PLUS_SUCCESS;
-        }
-
-        try
-        {
-          ransacEstimator->SetParametersEstimator(planeEstimator.GetPointer());
-        }
-        catch (std::exception& e)
-        {
-          LOG_DEBUG(e.what());
-          return PLUS_SUCCESS;
-        }
-
-        // RANSAC drops the frame rate down to 2fps from 20... Is it worth it?
-
-        //try
-        //{
-        //  ransacEstimator->Compute(ransacParameterResult, desiredProbabilityForNoOutliers);
-        //}
-        //catch (std::exception& e)
-        //{
-        //  LOG_DEBUG(e.what());
-        //  return PLUS_SUCCESS;
-        //}
-
-        // print results of least squares / RANSAC plane fit
-        if (ransacParameterResult.empty())
-        {
-          LOG_INFO("Unable to fit line through points with least squares estimation");
-        }
-        else
-        {
-          LOG_INFO("Least squares line parameters (n, a):");
-          for (unsigned int i = 0; i < (2 * 3); i++)
-          {
-            LOG_INFO(" RANSAC parameter: " << ransacParameterResult[i]);
-          }
-        }
-
-        double zAxis[3];
-        zAxis[0] = ransacParameterResult[0];
-        zAxis[1] = ransacParameterResult[1];
-        zAxis[2] = ransacParameterResult[2];
-
-        // center is currently computed using the center of mass of the plane from least squares,
-        // this could be updated to be the intersection of a line from (0,0,0) to the plane center
-        double center[3];
-        center[0] = ransacParameterResult[3];
-        center[1] = ransacParameterResult[4];
-        center[2] = ransacParameterResult[5];
-
-        // compute marker transform based on depth sensor data
-        vtkSmartPointer<vtkMatrix4x4> depthTransform;
-        ComputePlaneTransform(depthTransform, xAxis, zAxis, center);
-
-        cout << depthTransform;
         if (toolIt->MarkerPoseTracker.estimatePose(*markerIt, CP, toolIt->MarkerSizeMm / MM_PER_M, 4))
         {
-          // pose successfully estimated, update transform
+          // UPDATE OPTICAL TRANSFORM
           cv::Mat Rvec = toolIt->MarkerPoseTracker.getRvec();
           cv::Mat Tvec = toolIt->MarkerPoseTracker.getTvec();
-          BuildTransformMatrix(toolIt->transformMatrix, Rvec, Tvec);
-          ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->transformMatrix, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
+          cv::Mat Rmat(3, 3, CV_32FC1);
+          cv::Rodrigues(Rvec, Rmat);
+          BuildTransformMatrix(toolIt->MarkerToOpticalCameraTransform, Rmat, Tvec);
+
+          // UPDATE DEPTH TRANSFORM
+          // get marker corners
+          std::vector<cv::Point2d> corners;
+          corners = markerIt->getCornersPx();
+
+          // copy data from inside the marker into data structure for RANSAC plane algorithm
+          std::vector<itk::Point<double, 3>> itkPlane;
+          GenerateItkData(markerPolyData, itkPlane, corners, dim, image);
+
+          cv::circle(image, corners[0], 2, cv::Scalar(0, 0, 255), -1);
+          cv::circle(image, corners[1], 2, cv::Scalar(255, 0, 0), -1);
+
+          // find plane normal and distance using RANSAC
+          std::vector<double> ransacParameterResult;
+          typedef itk::PlaneParametersEstimator<3> PlaneEstimatorType;
+          typedef itk::RANSAC<itk::Point<double, 3>, double> RANSACType;
+
+          //create and initialize the parameter estimator
+          double maximalDistanceFromPlane = 0.5;
+          PlaneEstimatorType::Pointer planeEstimator = PlaneEstimatorType::New();
+          planeEstimator->SetDelta(maximalDistanceFromPlane);
+          planeEstimator->LeastSquaresEstimate(itkPlane, ransacParameterResult);
+
+          //create and initialize the RANSAC algorithm
+          double desiredProbabilityForNoOutliers = 0.90;
+          RANSACType::Pointer ransacEstimator = RANSACType::New();
+
+          try
+          {
+            ransacEstimator->SetData(itkPlane);
+          }
+          catch (std::exception& e)
+          {
+            LOG_DEBUG(e.what());
+            return PLUS_SUCCESS;
+          }
+
+          try
+          {
+            ransacEstimator->SetParametersEstimator(planeEstimator.GetPointer());
+          }
+          catch (std::exception& e)
+          {
+            LOG_DEBUG(e.what());
+            return PLUS_SUCCESS;
+          }
+
+          // RANSAC causes massive pauses in tracking... Is it worth it?
+
+          /*try
+          {
+            ransacEstimator->Compute(ransacParameterResult, desiredProbabilityForNoOutliers);
+          }
+          catch (std::exception& e)
+          {
+            LOG_DEBUG(e.what());
+            return PLUS_SUCCESS;
+          }*/
+
+          // print results of least squares / RANSAC plane fit
+          if (ransacParameterResult.empty())
+          {
+            LOG_WARNING("Unable to fit line through points with least squares estimation");
+            return PLUS_SUCCESS;
+          }
+          else
+          {
+            LOG_INFO("Least squares line parameters (n, a):");
+            for (unsigned int i = 0; i < (2 * 3); i++)
+            {
+              LOG_INFO(" RANSAC parameter: " << ransacParameterResult[i]);
+            }
+          }
+
+          double zAxis[4];
+          zAxis[0] = ransacParameterResult[0];
+          zAxis[1] = ransacParameterResult[1];
+          zAxis[2] = ransacParameterResult[2];
+          zAxis[3] = 0;
+
+          double xAxis[4];
+          xAxis[0] = Rmat.at<float>(0, 0);
+          xAxis[1] = Rmat.at<float>(1, 0);
+          xAxis[2] = Rmat.at<float>(2, 0);
+          xAxis[3] = 0;
+
+          // center is currently computed using the center of mass of the plane from least squares,
+          // this could be updated to be the intersection of a line from (0,0,0) to the plane center
+          double center[4];
+          center[0] = ransacParameterResult[3];
+          center[1] = ransacParameterResult[4];
+          center[2] = ransacParameterResult[5];
+          center[3] = 0;
+
+          ComputePlaneTransform(toolIt->MarkerToDepthCameraTransform, xAxis, zAxis, center);
+          ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->MarkerToOpticalCameraTransform, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
+          ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->MarkerToDepthCameraTransform, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
         }
         else
         {
@@ -1008,7 +1075,8 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     }
     if (!toolInFrame) {
       // tool not in frame
-      ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->transformMatrix, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
+      ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->MarkerToOpticalCameraTransform, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
+      ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->MarkerToDepthCameraTransform, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
     }
   }
 

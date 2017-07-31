@@ -117,7 +117,9 @@ private:
     std::string ToolSourceId;
     std::string ToolName;
     aruco::MarkerPoseTracker MarkerPoseTracker;
-    vtkSmartPointer<vtkMatrix4x4> transformMatrix = vtkSmartPointer<vtkMatrix4x4>::New();
+    vtkSmartPointer<vtkMatrix4x4> MarkerToOpticalCameraTransform = vtkSmartPointer<vtkMatrix4x4>::New();
+    //TODO: For SPIE 2017 experiment only
+    vtkSmartPointer<vtkMatrix4x4> MarkerToDepthCameraTransform = vtkSmartPointer<vtkMatrix4x4>::New();
   };
 
   // TODO: add error checking
@@ -243,7 +245,7 @@ private:
   );
   
   void ComputePlaneTransform(
-    vtkSmartPointer<vtkMatrix4x4> transformMatrix,
+    vtkSmartPointer<vtkMatrix4x4> depthTransform,
     double x_axis[],
     double z_axis[],
     double center[]);
@@ -258,5 +260,8 @@ private:
   cv::Point2d GetMarkerCenter(std::vector<cv::Point2d> corners);
 
   double* MarkerCenterImageToSpatial(vtkSmartPointer<vtkPolyData> vtkDepthData, cv::Point2d imageCenter, cv::Mat image);
+
+  float VectorAngleDeg(vnl_vector<double> xAxis, vnl_vector<double> zAxis);
+
 };
 #endif
