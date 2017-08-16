@@ -6,29 +6,41 @@ See License.txt for details.
 
 #define MM_PER_M 1000
 
+// Local includes
+#include "PixelCodec.h"
 #include "PlusConfigure.h"
-#include "vtkPlusOpticalMarkerTracker.h"
 #include "PlusVideoFrame.h"
-#include "vtkImageData.h"
-#include "vtkImageImport.h"
-#include "vtkMath.h"
-#include "vtkObjectFactory.h"
-#include "vtkExtractVOI.h"
+#include "vtkPlusDataSource.h"
+#include "vtkPlusOpticalMarkerTracker.h"
+
+// VTK includes
+#include <vtkExtractVOI.h>
+#include <vtkImageData.h>
+#include <vtkImageImport.h>
+#include <vtkMath.h>
+#include <vtkMatrix4x4.h>
+#include <vtkObjectFactory.h>
+
+// OS includes
 #include <fstream>
 #include <iostream>
 #include <set>
-#include "vtkPlusDataSource.h"
-#include "vtkMatrix4x4.h"
-#include "PixelCodec.h"
-#include "RANSAC.h"
-#include "ParametersEstimator.h"
-#include "PlaneParametersEstimator.h"
-#include "vnl_cross.h"
 
-// aruco
-#include "dictionary.h"
+// RANSAC includes
+#include <RANSAC.h>
+#include <ParametersEstimator.h>
+#include <PlaneParametersEstimator.h>
 
-// OpenCV
+// VNL includes
+#include <vnl_cross.h>
+
+// aruco includes
+#include <markerdetector.h>
+#include <cameraparameters.h>
+#include <dictionary.h>
+#include <posetracker.h>
+
+// OpenCV includes
 #include <opencv2/highgui.hpp>
 #include <opencv2/calib3d.hpp>
 
@@ -41,62 +53,113 @@ See License.txt for details.
 #include "vtkRenderWindowInteractor.h"
 #include "vtkAxesActor.h"
 #include "vtkOrientationMarkerWidget.h"
+// are you really for testing?
 #include "opencv2/core.hpp"
 #include "opencv2/imgproc.hpp"
 
+// TODO: clean this up... shouldn't have global vars (move them into their respective methods)
 static const int CHANNEL_INDEX_VIDEO = 0;
 static const int CHANNEL_INDEX_POLYDATA = 1;
 static const int LEFT_BOUNDARY = false;
 static const int RIGHT_BOUNDARY = true;
-static const double PI = 3.14159265358979323846;  /* pi from Math.h */
+static const double PI = 3.14159265358979323846;
 
+//----------------------------------------------------------------------------
 vtkStandardNewMacro(vtkPlusOpticalMarkerTracker);
-//----------------------------------------------------------------------------
-vtkPlusOpticalMarkerTracker::TrackedTool::TrackedTool(int MarkerId, float MarkerSizeMm, std::string ToolSourceId)
+
+namespace
 {
-  ToolMarkerType = SINGLE_MARKER;
-  this->MarkerId = MarkerId;
-  this->MarkerSizeMm = MarkerSizeMm;
-  this->ToolSourceId = ToolSourceId;
+  class TrackedTool
+  {
+  public:
+    enum TOOL_MARKER_TYPE
+    {
+      SINGLE_MARKER,
+      MARKER_MAP
+    };
+
+    TrackedTool(int markerId, float markerSizeMm, const std::string& toolSourceId)
+      : ToolMarkerType(SINGLE_MARKER)
+      , MarkerId(markerId)
+      , MarkerSizeMm(markerSizeMm)
+      , ToolSourceId(toolSourceId)
+    {
+    }
+    TrackedTool(const std::string& markerMapFile, const std::string& toolSourceId)
+      : ToolMarkerType(MARKER_MAP)
+      , MarkerMapFile(markerMapFile)
+      , ToolSourceId(toolSourceId)
+    {
+    }
+
+    int MarkerId;
+    TOOL_MARKER_TYPE ToolMarkerType;
+    float MarkerSizeMm;
+
+    std::string MarkerMapFile;
+    std::string ToolSourceId;
+    std::string ToolName;
+    aruco::MarkerPoseTracker MarkerPoseTracker;
+    vtkSmartPointer<vtkMatrix4x4> OpticalMarkerToCamera = vtkSmartPointer<vtkMatrix4x4>::New();
+    vtkSmartPointer<vtkMatrix4x4> DepthMarkerToCamera = vtkSmartPointer<vtkMatrix4x4>::New();
+  };
 }
 
-vtkPlusOpticalMarkerTracker::TrackedTool::TrackedTool(std::string MarkerMapFile, std::string ToolSourceId)
-{
-  ToolMarkerType = MARKER_MAP;
-  this->MarkerMapFile = MarkerMapFile;
-  this->ToolSourceId = ToolSourceId;
-}
-
 //----------------------------------------------------------------------------
-
-class vtkPlusOpticalMarkerTracker::vtkInternal
+class vtkPlusOpticalMarkerTracker::vtkInternal : public vtkObject
 {
 public:
-  vtkPlusOpticalMarkerTracker *External;
-
+  vtkPlusOpticalMarkerTracker* External;
 
   vtkInternal(vtkPlusOpticalMarkerTracker* external)
     : External(external)
+    , MarkerDetector(std::make_shared<aruco::MarkerDetector>())
+    , CameraParameters(std::make_shared<aruco::CameraParameters>())
   {
   }
 
   virtual ~vtkInternal()
   {
+    MarkerDetector = nullptr;
+    CameraParameters = nullptr;
   }
+
+  vtkGetMacro(TrackingMethod, TRACKING_METHOD);
+  vtkGetStdStringMacro(CameraCalibrationFile);
+  vtkGetStdStringMacro(MarkerDictionary);
+
+public:
+  PlusStatus BuildTransformMatrix(vtkSmartPointer<vtkMatrix4x4> transformMatrix, const cv::Mat& Rvec, const cv::Mat& Tvec);
+
+  vtkSetMacro(TrackingMethod, TRACKING_METHOD);
+  vtkSetStdStringMacro(CameraCalibrationFile);
+  vtkSetStdStringMacro(MarkerDictionary);
+
+  std::string               CameraCalibrationFile;
+  TRACKING_METHOD           TrackingMethod;
+  std::string               MarkerDictionary;
+  std::vector<TrackedTool>  Tools;
+
+  /*! Pointer to main aruco objects */
+  std::shared_ptr<aruco::MarkerDetector>    MarkerDetector;
+  std::shared_ptr<aruco::CameraParameters>  CameraParameters;
+  std::vector<aruco::Marker>                Markers;
 };
 
 //----------------------------------------------------------------------------
 vtkPlusOpticalMarkerTracker::vtkPlusOpticalMarkerTracker()
-: vtkPlusDevice()
+  : vtkPlusDevice()
+  , Internal(new vtkInternal(this))
 {
   this->FrameNumber = 0;
   this->StartThreadForInternalUpdates = true;
 }
 
 //----------------------------------------------------------------------------
-vtkPlusOpticalMarkerTracker::~vtkPlusOpticalMarkerTracker() 
+vtkPlusOpticalMarkerTracker::~vtkPlusOpticalMarkerTracker()
 {
-
+  delete Internal;
+  Internal = nullptr;
 }
 
 //----------------------------------------------------------------------------
@@ -112,9 +175,9 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
   // TODO: Improve error checking
   XML_FIND_DEVICE_ELEMENT_REQUIRED_FOR_READING(deviceConfig, rootConfigElement);
 
-  XML_READ_CSTRING_ATTRIBUTE_REQUIRED(CameraCalibrationFile, deviceConfig);
-  XML_READ_ENUM2_ATTRIBUTE_OPTIONAL(TrackingMethod, deviceConfig, "OPTICAL", OPTICAL, "OPTICAL_AND_DEPTH", OPTICAL_AND_DEPTH);
-  XML_READ_CSTRING_ATTRIBUTE_REQUIRED(MarkerDictionary, deviceConfig);
+  XML_READ_STRING_ATTRIBUTE_NONMEMBER_REQUIRED("CameraCalibrationFile", this->Internal->CameraCalibrationFile, deviceConfig);
+  XML_READ_ENUM2_ATTRIBUTE_NONMEMBER_OPTIONAL("TrackingMethod", this->Internal->TrackingMethod, deviceConfig, "OPTICAL", TRACKING_OPTICAL, "OPTICAL_AND_DEPTH", TRACKING_OPTICAL_AND_DEPTH);
+  XML_READ_STRING_ATTRIBUTE_NONMEMBER_REQUIRED("MarkerDictionary", this->Internal->MarkerDictionary, deviceConfig);
 
   XML_FIND_NESTED_ELEMENT_REQUIRED(dataSourcesElement, deviceConfig, "DataSources");
   for (int nestedElementIndex = 0; nestedElementIndex < dataSourcesElement->GetNumberOfNestedElements(); nestedElementIndex++)
@@ -150,20 +213,21 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
       float MarkerSizeMm;
       toolDataElement->GetScalarAttribute("MarkerSizeMm", MarkerSizeMm);
       TrackedTool newTool(MarkerId, MarkerSizeMm, toolSourceId);
-      Tools.push_back(newTool);
+      this->Internal->Tools.push_back(newTool);
     }
     else if (toolDataElement->GetAttribute("MarkerMapFile") != NULL)
     {
       // this tool is tracked by a marker map
       // TODO: Implement marker map tracking.
     }
-    else {
+    else
+    {
       LOG_ERROR("Incorrectly formatted tool data source.");
     }
   }
 
   //TODO: read tracking type from number of inputs
-  this->TrackingMethod = OPTICAL_AND_DEPTH;
+  this->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH;
   return PLUS_SUCCESS;
 }
 
@@ -172,9 +236,26 @@ PlusStatus vtkPlusOpticalMarkerTracker::WriteConfiguration(vtkXMLDataElement* ro
 {
   XML_FIND_DEVICE_ELEMENT_REQUIRED_FOR_WRITING(deviceConfig, rootConfigElement);
 
-  XML_WRITE_STRING_ATTRIBUTE(CameraCalibrationFile, deviceConfig);
-  // no write enum method
-  XML_WRITE_STRING_ATTRIBUTE(MarkerDictionary, deviceConfig);
+  if (!this->Internal->CameraCalibrationFile.empty())
+  {
+    deviceConfig->SetAttribute("CameraCalibrationFile", this->Internal->CameraCalibrationFile.c_str());
+  }
+  if (!this->Internal->MarkerDictionary.empty())
+  {
+    deviceConfig->SetAttribute("MarkerDictionary", this->Internal->MarkerDictionary.c_str());
+  }
+  switch (this->Internal->TrackingMethod)
+  {
+  case TRACKING_OPTICAL:
+    deviceConfig->SetAttribute("TrackingMethod", "OPTICAL");
+    break;
+  case TRACKING_OPTICAL_AND_DEPTH:
+    deviceConfig->SetAttribute("TrackingMethod", "OPTICAL_AND_DEPTH");
+    break;
+  default:
+    LOG_ERROR("Unknown tracking method passed to vtkPlusOpticalMarkerTracker::WriteConfiguration");
+    return PLUS_FAIL;
+  }
 
   //TODO: Write data for custom attributes
 
@@ -184,7 +265,6 @@ PlusStatus vtkPlusOpticalMarkerTracker::WriteConfiguration(vtkXMLDataElement* ro
 //----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::Probe()
 {
-
   return PLUS_SUCCESS;
 }
 
@@ -192,7 +272,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::Probe()
 PlusStatus vtkPlusOpticalMarkerTracker::InternalConnect()
 {
   // get calibration file path && check file exists
-  std::string calibFilePath = vtkPlusConfig::GetInstance()->GetDeviceSetConfigurationPath(this->CameraCalibrationFile);
+  std::string calibFilePath = vtkPlusConfig::GetInstance()->GetDeviceSetConfigurationPath(this->Internal->CameraCalibrationFile);
   LOG_INFO("Use aruco camera calibration file located at: " << calibFilePath);
   if (!vtksys::SystemTools::FileExists(calibFilePath.c_str(), true))
   {
@@ -200,16 +280,16 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalConnect()
     return PLUS_FAIL;
   }
 
-  CP.readFromXMLFile(calibFilePath);
-  MDetector.setDictionary(MarkerDictionary);
-
+  // TODO: Need error handling for this?
+  this->Internal->CameraParameters->readFromXMLFile(calibFilePath);
+  this->Internal->MarkerDetector->setDictionary(this->Internal->MarkerDictionary);
   // threshold tuning numbers from aruco_test
-  MDetector.setThresholdParams(7, 7);
-  MDetector.setThresholdParamRange(2, 0);
+  this->Internal->MarkerDetector->setThresholdParams(7, 7);
+  this->Internal->MarkerDetector->setThresholdParamRange(2, 0);
 
   bool lowestRateKnown = false;
   double lowestRate = 30; // just a usual value (FPS)
-  for (ChannelContainerConstIterator it = this->InputChannels.begin(); it != this->InputChannels.end(); ++it)
+  for (ChannelContainerConstIterator it = begin(this->InputChannels); it != end(this->InputChannels); ++it)
   {
     vtkPlusChannel* anInputStream = (*it);
     if (anInputStream->GetOwnerDevice()->GetAcquisitionRate() < lowestRate || !lowestRateKnown)
@@ -234,36 +314,50 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalConnect()
 //----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::InternalDisconnect()
 {
-
   return PLUS_SUCCESS;
 }
 
 //----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::InternalStartRecording()
 {
-
-return PLUS_SUCCESS;
+  return PLUS_SUCCESS;
 }
 
 //----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::InternalStopRecording()
 {
-
   return PLUS_SUCCESS;
 }
 
 //----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::BuildTransformMatrix(vtkSmartPointer<vtkMatrix4x4> transformMatrix, cv::Mat Rmat, cv::Mat Tvec)
+PlusStatus vtkPlusOpticalMarkerTracker::vtkInternal::BuildTransformMatrix(
+  vtkSmartPointer<vtkMatrix4x4> transformMatrix,
+  const cv::Mat& Rvec,
+  const cv::Mat& Tvec)
 {
   transformMatrix->Identity();
+  cv::Mat Rmat(3, 3, CV_32FC1);
+  try
+  {
+    cv::Rodrigues(Rvec, Rmat);
+  }
+  catch (...)
+  {
+    return PLUS_FAIL;
+  }
 
   for (int x = 0; x <= 2; x++)
   {
     transformMatrix->SetElement(x, 3, MM_PER_M * Tvec.at<float>(x, 0));
     for (int y = 0; y <= 2; y++)
+    {
       transformMatrix->SetElement(x, y, Rmat.at<float>(x, y));
+    }
   }
+
+  return PLUS_SUCCESS;
 }
+
 //----------------------------------------------------------------------------
 vtkPlusOpticalMarkerTracker::MARKER_ORIENTATION vtkPlusOpticalMarkerTracker::DetermineMarkerOrientation(std::vector<cv::Point2d>& corners)
 {
@@ -827,7 +921,7 @@ float vtkPlusOpticalMarkerTracker::VectorAngleDeg(vnl_vector<double> xAxis, vnl_
 //----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
 {
-  if (this->TrackingMethod == OPTICAL)
+  if (this->TrackingMethod == TRACKING_OPTICAL)
   {
     if (this->InputChannels.size() != 1)
     {
@@ -835,7 +929,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
       return PLUS_FAIL;
     }
   }
-  else if (this->TrackingMethod = OPTICAL_AND_DEPTH)
+  else if (this->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH)
   {
     if (this->InputChannels.size() != 2)
     {
@@ -871,7 +965,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
   // grab tracked frames to process from buffer
   PlusTrackedFrame trackedVideoFrame;
   PlusTrackedFrame trackedPolyDataFrame;
-  if (this->TrackingMethod == OPTICAL || this->TrackingMethod == OPTICAL_AND_DEPTH)
+  if (this->TrackingMethod == TRACKING_OPTICAL || this->TrackingMethod == TRACKING_OPTICAL_AND_DEPTH)
   {
     // get optical video data
     if (this->InputChannels[CHANNEL_INDEX_VIDEO]->GetTrackedFrame(trackedVideoFrame) != PLUS_SUCCESS)
@@ -881,7 +975,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
       return PLUS_FAIL;
     }
   }
-  if (this->TrackingMethod = OPTICAL_AND_DEPTH)
+  if (this->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH)
   {
     // get depth PolyData
     if (this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetTrackedFrame(oldestTrackingTimestamp, trackedPolyDataFrame) != PLUS_SUCCESS)
@@ -938,10 +1032,10 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
 
 
   // detect markers in frame
-  MDetector.detect(image, markers);
+  this->Internal->MarkerDetector->detect(image, this->Internal->Markers);
   const double unfilteredTimestamp = vtkPlusAccurateTimer::GetSystemTime();
   // iterate through tools updating tracking
-  for (vector<TrackedTool>::iterator toolIt = Tools.begin(); toolIt != Tools.end(); ++toolIt)
+  for (vector<TrackedTool>::iterator toolIt = begin(this->Internal->Tools); toolIt != end(this->Internal->Tools); ++toolIt)
   {
     // for SPIE 2017 to output both depth and optical transforms simultaneously
     // ignores depth named transforms
@@ -951,20 +1045,20 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     }
 
     bool toolInFrame = false;
-    for (vector<aruco::Marker>::iterator markerIt = markers.begin(); markerIt != markers.end(); ++markerIt)
+    for (vector<aruco::Marker>::iterator markerIt = begin(this->Internal->Markers); markerIt != end(this->Internal->Markers); ++markerIt)
     {
       if (toolIt->MarkerId == markerIt->id) {
         //marker is in frame
         toolInFrame = true;
 
-        if (toolIt->MarkerPoseTracker.estimatePose(*markerIt, CP, toolIt->MarkerSizeMm / MM_PER_M, 4))
+        if (toolIt->MarkerPoseTracker.estimatePose(*markerIt, *this->Internal->CameraParameters, toolIt->MarkerSizeMm / MM_PER_M, 4))
         {
           // UPDATE OPTICAL TRANSFORM
           cv::Mat Rvec = toolIt->MarkerPoseTracker.getRvec();
           cv::Mat Tvec = toolIt->MarkerPoseTracker.getTvec();
           cv::Mat Rmat(3, 3, CV_32FC1);
           cv::Rodrigues(Rvec, Rmat);
-          BuildTransformMatrix(toolIt->MarkerToOpticalCameraTransform, Rmat, Tvec);
+          this->Internal->BuildTransformMatrix(toolIt->OpticalMarkerToCamera, Rmat, Tvec);
 
           // UPDATE DEPTH TRANSFORM
           // get marker corners
@@ -1060,9 +1154,9 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
           center[2] = ransacParameterResult[5];
           center[3] = 0;
 
-          ComputePlaneTransform(toolIt->MarkerToDepthCameraTransform, xAxis, zAxis, center);
-          ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->MarkerToOpticalCameraTransform, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
-          ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->MarkerToDepthCameraTransform, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
+          ComputePlaneTransform(toolIt->DepthMarkerToCamera, xAxis, zAxis, center);
+          ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->OpticalMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
+          ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->DepthMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
         }
         else
         {
@@ -1075,8 +1169,8 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     }
     if (!toolInFrame) {
       // tool not in frame
-      ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->MarkerToOpticalCameraTransform, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
-      ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->MarkerToDepthCameraTransform, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
+      ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->OpticalMarkerToCamera, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
+      ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->DepthMarkerToCamera, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
     }
   }
 

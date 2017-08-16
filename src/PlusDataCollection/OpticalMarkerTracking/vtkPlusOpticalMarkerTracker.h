@@ -7,17 +7,9 @@
 #ifndef __vtkPlusOpticalMarkerTracker_h
 #define __vtkPlusOpticalMarkerTracker_h
 
+// Local includes
 #include "vtkPlusDataCollectionExport.h"
 #include "vtkPlusDevice.h"
-
-// aruco headers
-// TODO: move these to cxx files (use PIMPL - vtkInternal - if needed)
-#include "markerdetector.h"
-#include "cameraparameters.h"
-#include "posetracker.h"
-
-class vtkPlusDataSource;
-class vtkMatrix4x4;
 
 /*!
   \class vtkPlusOpticalMarkerTracker
@@ -31,11 +23,11 @@ public:
   /*! Defines whether or not depth stream is used. */
   enum TRACKING_METHOD
   {
-    OPTICAL,
-    OPTICAL_AND_DEPTH
+    TRACKING_OPTICAL,
+    TRACKING_OPTICAL_AND_DEPTH
   };
 
-  static vtkPlusOpticalMarkerTracker *New();
+  static vtkPlusOpticalMarkerTracker* New();
   vtkTypeMacro(vtkPlusOpticalMarkerTracker,vtkPlusDevice);
   virtual void PrintSelf(ostream& os, vtkIndent indent) VTK_OVERRIDE;
 
@@ -55,8 +47,7 @@ public:
   PlusStatus InternalDisconnect();
 
   /*!
-  Get an update from the tracking system and push the new transforms
-  to the tools.  This should only be used within vtkTracker.cxx.
+  Get an update from the tracking system and push the new transforms to the tools.
   */
   virtual PlusStatus InternalUpdate();
 
@@ -64,26 +55,11 @@ public:
   virtual bool IsTracker() const { return true; }
   virtual bool IsVirtual() const { return true; }
 
-  /*!
-    Get image from the camera into VTK images. If an input arguments is NULL then that image is not retrieved.
-  */
-  PlusStatus GetImage(vtkImageData* leftImage, vtkImageData* rightImage);
-
-  vtkGetMacro(TrackingMethod, TRACKING_METHOD);
-  vtkGetMacro(CameraCalibrationFile, std::string);
-  vtkGetMacro(MarkerDictionary, std::string);
 protected:
-  /*! Constructor */
   vtkPlusOpticalMarkerTracker();
-
-  /*! Destructor */
   ~vtkPlusOpticalMarkerTracker();
 
-  vtkSetMacro(TrackingMethod, TRACKING_METHOD);
-  vtkSetMacro(CameraCalibrationFile, std::string);
-  vtkSetMacro(MarkerDictionary, std::string);
-
-  /*! */
+  /*! Start the tracking system. */
   PlusStatus InternalStartRecording();
 
   /*! Stop the tracking system and bring it back to its initial state. */
@@ -99,48 +75,8 @@ private:
   vtkPlusOpticalMarkerTracker(const vtkPlusOpticalMarkerTracker&);
   void operator=(const vtkPlusOpticalMarkerTracker&);
 
-  /*!  */
-  class TrackedTool
-  {
-  public:
-    TrackedTool(int MarkerId, float MarkerSizeMm, std::string ToolSourceId);
-    TrackedTool(std::string MarkerMapFile, string ToolSourceId);
-    enum TOOL_MARKER_TYPE
-    {
-      SINGLE_MARKER,
-      MARKER_MAP
-    };
-    int MarkerId;
-    TOOL_MARKER_TYPE ToolMarkerType;
-    float MarkerSizeMm;
-    std::string MarkerMapFile;
-    std::string ToolSourceId;
-    std::string ToolName;
-    aruco::MarkerPoseTracker MarkerPoseTracker;
-    vtkSmartPointer<vtkMatrix4x4> MarkerToOpticalCameraTransform = vtkSmartPointer<vtkMatrix4x4>::New();
-    //TODO: For SPIE 2017 experiment only
-    vtkSmartPointer<vtkMatrix4x4> MarkerToDepthCameraTransform = vtkSmartPointer<vtkMatrix4x4>::New();
-  };
 
-  // TODO: add error checking
-  void BuildTransformMatrix(vtkSmartPointer<vtkMatrix4x4> transformMatrix, cv::Mat Rvec, cv::Mat Tvec);
 
-  /*!  */
-  std::string CameraCalibrationFile;
-
-  /*!  */
-  TRACKING_METHOD TrackingMethod;
-
-  /*!  */
-  std::string MarkerDictionary;
-
-  /*!  */
-  std::vector<TrackedTool> Tools;
-
-  /*! Pointer to main aruco objects */
-  aruco::MarkerDetector MDetector;
-  aruco::CameraParameters CP;
-  vector<aruco::Marker> markers;
 
   private:
   enum MARKER_ORIENTATION
@@ -152,6 +88,10 @@ private:
   };
 
   private:
+  // TODO: move this to vtkInternal
+  TRACKING_METHOD TrackingMethod;
+
+
   /*
    * Determines if the marker is ALIGNED, SKEW_LEFT, SKEW_RIGHT or ROTATED
    * with respect to the image frame.  If marker is SKEW_LEFT, SKEW_RIGHT
