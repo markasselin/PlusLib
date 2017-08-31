@@ -106,7 +106,7 @@ namespace
 }
 
 //----------------------------------------------------------------------------
-class vtkPlusOpticalMarkerTracker::vtkInternal : public vtkObject
+class vtkPlusOpticalMarkerTracker::vtkInternal
 {
 public:
   vtkPlusOpticalMarkerTracker* External;
@@ -124,10 +124,6 @@ public:
     CameraParameters = nullptr;
   }
 
-  vtkGetMacro(TrackingMethod, TRACKING_METHOD);
-  vtkGetStdStringMacro(CameraCalibrationFile);
-  vtkGetStdStringMacro(MarkerDictionary);
-
 public:
   /*
    * Builds optical transform out of aruco pose tracking data
@@ -135,7 +131,8 @@ public:
   PlusStatus BuildOpticalTransformMatrix(
     vtkSmartPointer<vtkMatrix4x4> transformMatrix,
     const cv::Mat& Rvec,
-    const cv::Mat& Tvec);
+    const cv::Mat& Tvec,
+    cv::Mat& Rmat);
 
   //TODO: this should have PlusStatus return type
   void ComputePlaneTransform(
@@ -236,10 +233,6 @@ public:
   std::string               MarkerDictionary;
   std::vector<TrackedTool>  Tools;
 
-  vtkSetMacro(TrackingMethod, TRACKING_METHOD);
-  vtkSetStdStringMacro(CameraCalibrationFile);
-  vtkSetStdStringMacro(MarkerDictionary);
-
   /*! Pointer to main aruco objects */
   std::shared_ptr<aruco::MarkerDetector>    MarkerDetector;
   std::shared_ptr<aruco::CameraParameters>  CameraParameters;
@@ -275,9 +268,9 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
   // TODO: Improve error checking
   XML_FIND_DEVICE_ELEMENT_REQUIRED_FOR_READING(deviceConfig, rootConfigElement);
 
-  XML_READ_STRING_ATTRIBUTE_NONMEMBER_REQUIRED("CameraCalibrationFile", this->Internal->CameraCalibrationFile, deviceConfig);
+  XML_READ_STRING_ATTRIBUTE_NONMEMBER_REQUIRED(CameraCalibrationFile, this->Internal->CameraCalibrationFile, deviceConfig);
   XML_READ_ENUM2_ATTRIBUTE_NONMEMBER_OPTIONAL("TrackingMethod", this->Internal->TrackingMethod, deviceConfig, "OPTICAL", TRACKING_OPTICAL, "OPTICAL_AND_DEPTH", TRACKING_OPTICAL_AND_DEPTH);
-  XML_READ_STRING_ATTRIBUTE_NONMEMBER_REQUIRED("MarkerDictionary", this->Internal->MarkerDictionary, deviceConfig);
+  XML_READ_STRING_ATTRIBUTE_NONMEMBER_REQUIRED(MarkerDictionary, this->Internal->MarkerDictionary, deviceConfig);
 
   XML_FIND_NESTED_ELEMENT_REQUIRED(dataSourcesElement, deviceConfig, "DataSources");
   for (int nestedElementIndex = 0; nestedElementIndex < dataSourcesElement->GetNumberOfNestedElements(); nestedElementIndex++)
@@ -433,10 +426,10 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalStopRecording()
 PlusStatus vtkPlusOpticalMarkerTracker::vtkInternal::BuildOpticalTransformMatrix(
   vtkSmartPointer<vtkMatrix4x4> transformMatrix,
   const cv::Mat& Rvec,
-  const cv::Mat& Tvec)
+  const cv::Mat& Tvec,
+  cv::Mat& Rmat)
 {
   transformMatrix->Identity();
-  cv::Mat Rmat(3, 3, CV_32FC1);
   try
   {
     cv::Rodrigues(Rvec, Rmat);
@@ -970,8 +963,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
           cv::Mat Rvec = toolIt->MarkerPoseTracker.getRvec();
           cv::Mat Tvec = toolIt->MarkerPoseTracker.getTvec();
           cv::Mat Rmat(3, 3, CV_32FC1);
-          cv::Rodrigues(Rvec, Rmat);
-          this->Internal->BuildOpticalTransformMatrix(toolIt->OpticalMarkerToCamera, Rmat, Tvec);
+          this->Internal->BuildOpticalTransformMatrix(toolIt->OpticalMarkerToCamera, Rvec, Tvec, Rmat);
 
           // UPDATE DEPTH TRANSFORM
           // get marker corners
