@@ -27,9 +27,9 @@ See License.txt for details.
 #include <set>
 
 // RANSAC includes
-#include <RANSAC.h>
-#include <ParametersEstimator.h>
-#include <PlaneParametersEstimator.h>
+#include "RANSAC.h"
+#include "ParametersEstimator.h"
+#include "PlaneParametersEstimator.h"
 
 // VNL includes
 #include <vnl_cross.h>
@@ -129,16 +129,116 @@ public:
   vtkGetStdStringMacro(MarkerDictionary);
 
 public:
-  PlusStatus BuildTransformMatrix(vtkSmartPointer<vtkMatrix4x4> transformMatrix, const cv::Mat& Rvec, const cv::Mat& Tvec);
+  /*
+   * Builds optical transform out of aruco pose tracking data
+   */
+  PlusStatus BuildOpticalTransformMatrix(
+    vtkSmartPointer<vtkMatrix4x4> transformMatrix,
+    const cv::Mat& Rvec,
+    const cv::Mat& Tvec);
 
-  vtkSetMacro(TrackingMethod, TRACKING_METHOD);
-  vtkSetStdStringMacro(CameraCalibrationFile);
-  vtkSetStdStringMacro(MarkerDictionary);
+  //TODO: this should have PlusStatus return type
+  void ComputePlaneTransform(
+    vtkSmartPointer<vtkMatrix4x4> depthTransform,
+    double x_axis[],
+    double z_axis[],
+    double center[]);
+
+  /*
+   * Computes the angle between two vectors.
+   */
+  // TODO: is there a vnl method for this, can I make this more generic?
+  float VectorAngleDeg(vnl_vector<double> xAxis, vnl_vector<double> zAxis);
+
+  /*
+  * Computes the slope of the line x=my+b between corners 1 & 2.
+  * If corenrs have the same x or y values then returns special value 0.0.
+  */
+  float DetermineSlope(cv::Point2d corner1, cv::Point2d corner2);
+
+  /*
+  * Determines if the marker is ALIGNED, SKEW_LEFT, SKEW_RIGHT or ROTATED
+  * with respect to the image frame.  Re-orders corners so position 0 is top corner.
+  */
+  MARKER_ORIENTATION DetermineMarkerOrientation(std::vector<cv::Point2d>& corners);
+
+  //TODO: rename all the Generate methods to Extract
+
+  /*
+  * Computes a boundary of the marker whose path is defined by corners.
+  */
+  void GenerateBoundary(int* boundary, std::vector<cv::Point2d> corners, int top, bool isRight);
+
+  /*
+  *
+  */
+  void GenerateRotatedItkData(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<itk::Point<double, 3>> &itkData,
+    std::vector<cv::Point2d> corners,
+    /*for testing*/
+    unsigned int dim[],
+    cv::Mat image
+  );
+
+  /*
+  *
+  */
+  void GenerateSkewLeftItkData(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<itk::Point<double, 3>> &itkData,
+    std::vector<cv::Point2d> corners,
+    /*for testing*/
+    unsigned int dim[],
+    cv::Mat image
+  );
+
+  /*
+  *
+  */
+  void GenerateSkewRightItkData(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<itk::Point<double, 3>> &itkData,
+    std::vector<cv::Point2d> corners,
+    /*for testing*/
+    unsigned int dim[],
+    cv::Mat image
+  );
+
+  /*
+  * Copy marker plane from vtkPolyData into itk datastructure for RANSAC input.
+  */
+  void CopyToItkData(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<itk::Point<double, 3>> &itkData,
+    int top,
+    int bottom,
+    int *leftBoundary,
+    int *rightBoundary);
+
+  /*
+  *
+  */
+  void GenerateItkData(
+    vtkSmartPointer<vtkPolyData> vtkDepthData,
+    std::vector<itk::Point<double, 3>> &itkData,
+    std::vector<cv::Point2d> corners,
+    /*for testing*/
+    unsigned int dim[],
+    cv::Mat image
+  );
+
+  // TODO: offload all depth plane fitting from InternalUpdate to DepthPlaneFit
+  //PlusStatus DepthPlaneFit()
 
   std::string               CameraCalibrationFile;
   TRACKING_METHOD           TrackingMethod;
   std::string               MarkerDictionary;
   std::vector<TrackedTool>  Tools;
+
+  vtkSetMacro(TrackingMethod, TRACKING_METHOD);
+  vtkSetStdStringMacro(CameraCalibrationFile);
+  vtkSetStdStringMacro(MarkerDictionary);
 
   /*! Pointer to main aruco objects */
   std::shared_ptr<aruco::MarkerDetector>    MarkerDetector;
@@ -227,7 +327,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
   }
 
   //TODO: read tracking type from number of inputs
-  this->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH;
+  this->Internal->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH;
   return PLUS_SUCCESS;
 }
 
@@ -330,7 +430,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalStopRecording()
 }
 
 //----------------------------------------------------------------------------
-PlusStatus vtkPlusOpticalMarkerTracker::vtkInternal::BuildTransformMatrix(
+PlusStatus vtkPlusOpticalMarkerTracker::vtkInternal::BuildOpticalTransformMatrix(
   vtkSmartPointer<vtkMatrix4x4> transformMatrix,
   const cv::Mat& Rvec,
   const cv::Mat& Tvec)
@@ -359,7 +459,98 @@ PlusStatus vtkPlusOpticalMarkerTracker::vtkInternal::BuildTransformMatrix(
 }
 
 //----------------------------------------------------------------------------
-vtkPlusOpticalMarkerTracker::MARKER_ORIENTATION vtkPlusOpticalMarkerTracker::DetermineMarkerOrientation(std::vector<cv::Point2d>& corners)
+void vtkPlusOpticalMarkerTracker::vtkInternal::ComputePlaneTransform(
+  vtkSmartPointer<vtkMatrix4x4> MarkerToDepthCamera,
+  double x_axis[],
+  double z_axis[],
+  double center[])
+{
+  // TODO: add homogenous coordinate to all raw array vectors
+  double z_expected[4] = { 0, 0, -1, 0 };
+  z_axis[1] = -z_axis[1]; // left-handed to right-handed coord sys conversion
+  float ZtoZAngle = vtkMath::Dot(z_expected, z_axis);
+  LOG_INFO("ZtoZangle: " << ZtoZAngle);
+  if (ZtoZAngle < 0)
+  {
+    // normal is pointing towards back of marker, flip it, as below
+    z_axis[0] *= -1;
+    z_axis[1] *= -1;
+    z_axis[2] *= -1;
+    z_axis[3] *= -1; // does the homogenous coordinate need to be flipped?
+  }
+  vnl_vector<double> xGuess(3, 3, x_axis);
+  vnl_vector<double> zAxis(3, 3, z_axis);
+  xGuess.normalize();
+  zAxis.normalize();
+
+  double x_theoretical[3] = { 1, 0, 0 };
+  vnl_vector<double> xTheoretical(3, 3, x_theoretical);
+  double y_theoretical[3] = { 0, 1, 0 };
+  vnl_vector<double> yTheoretical(3, 3, y_theoretical);
+
+  vnl_vector<double> yAxis;
+  vnl_vector<double> xAxis;
+
+  LOG_ERROR(VectorAngleDeg(xGuess, zAxis));
+  if (VectorAngleDeg(xGuess, zAxis) > 10)
+  {
+    LOG_ERROR("Using x_axis from aruco");
+    yAxis = vnl_cross_3d(zAxis, xGuess);
+    xAxis = vnl_cross_3d(yAxis, zAxis);
+  }
+  else if (VectorAngleDeg(xTheoretical, zAxis) > 10)
+  {
+    LOG_ERROR("using theoretical x_axis");
+    yAxis = vnl_cross_3d(zAxis, xTheoretical);
+    xAxis = vnl_cross_3d(yAxis, zAxis);
+  }
+  else
+  {
+    LOG_ERROR("Using theoretical y_axis as perpendicular to Z");
+    xAxis = vnl_cross_3d(yTheoretical, zAxis);
+    yAxis = vnl_cross_3d(zAxis, xAxis);
+  }
+
+  vnl_matrix<double> Rotation(3, 3);
+  Rotation.set_column(0, xAxis);
+  Rotation.set_column(1, yAxis);
+  Rotation.set_column(2, zAxis);
+
+  MarkerToDepthCamera->Identity();
+  for (int row = 0; row <= 2; row++)
+  {
+    for (int col = 0; col <= 2; col++)
+      MarkerToDepthCamera->SetElement(row, col, Rotation(row, col));
+  }
+  MarkerToDepthCamera->SetElement(0, 3, center[0]);
+  MarkerToDepthCamera->SetElement(1, 3, -center[1]);
+  MarkerToDepthCamera->SetElement(2, 3, center[2]);
+
+  //TODO: implement rotation conversion to standard tracker axes
+}
+
+//----------------------------------------------------------------------------
+float vtkPlusOpticalMarkerTracker::vtkInternal::VectorAngleDeg(vnl_vector<double> xAxis, vnl_vector<double> zAxis)
+{
+  float dotProduct = xAxis(0)*zAxis(0) + xAxis(1)*zAxis(1) + xAxis(2)*zAxis(2);
+  return abs(acos(dotProduct) * 180 / PI);
+}
+
+//----------------------------------------------------------------------------
+float vtkPlusOpticalMarkerTracker::vtkInternal::DetermineSlope(cv::Point2d corner1, cv::Point2d corner2)
+{
+  if (corner1.y == corner2.y)
+  {
+    return 0.0;
+  }
+  else
+  {
+    return ((float)(corner1.x - corner2.x)) / (corner1.y - corner2.y);
+  }
+}
+
+//----------------------------------------------------------------------------
+vtkPlusOpticalMarkerTracker::MARKER_ORIENTATION vtkPlusOpticalMarkerTracker::vtkInternal::DetermineMarkerOrientation(std::vector<cv::Point2d>& corners)
 {
   double yMin = corners[0].y;
   int top = 0;
@@ -407,14 +598,149 @@ vtkPlusOpticalMarkerTracker::MARKER_ORIENTATION vtkPlusOpticalMarkerTracker::Det
 }
 
 //----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::CopyToItkData(
+void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateBoundary(int* boundary, std::vector<cv::Point2d> corners, int top, bool isRight)
+{
+  int numSegments = corners.size() - 1;
+
+  for (int segIndex = 0; segIndex < numSegments; segIndex++)
+  {
+    int segTop = corners[segIndex].y;
+    int segBottom = corners[segIndex + 1].y;
+    float mPx = DetermineSlope(corners[segIndex], corners[segIndex + 1]);
+    int x1Px = corners[segIndex].x;
+    int y1Px = corners[segIndex].y;
+    for (int yPx = segTop; yPx <= segBottom; yPx++)
+    {
+      boundary[yPx - top] = mPx * (yPx - y1Px) + x1Px;
+    }
+  }
+}
+
+//----------------------------------------------------------------------------
+void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateRotatedItkData(
+  vtkSmartPointer<vtkPolyData> vtkDepthData,
+  std::vector<itk::Point<double, 3>> &itkData,
+  std::vector<cv::Point2d> corners,
+  /*for testing*/
+  unsigned int dim[],
+  cv::Mat image)
+{
+  const char TOP = 0, RIGHT = 1, BOTTOM = 2, LEFT = 3;
+  int top = corners[TOP].y;
+  int bottom = corners[BOTTOM].y;
+  int height = bottom - top + 1;
+
+  //LOG_WARNING("TOP    x:" << corners[TOP].x << " y: " << corners[TOP].y);
+  //LOG_WARNING("BOTTOM x:" << corners[BOTTOM].x << " y: " << corners[BOTTOM].y);
+  //LOG_WARNING("LEFT   x:" << corners[LEFT].x << " y: " << corners[LEFT].y);
+  //LOG_WARNING("RIGHT  x:" << corners[RIGHT].x << " y: " << corners[RIGHT].y);
+  //LOG_WARNING("height: " << height);
+
+  // generate left boundary
+  int* leftBoundary = new int[height];
+  std::vector<cv::Point2d> leftPath;
+  leftPath.push_back(corners[TOP]);
+  leftPath.push_back(corners[LEFT]);
+  leftPath.push_back(corners[BOTTOM]);
+  GenerateBoundary(leftBoundary, leftPath, top, false);
+
+  // generate right boundary
+  int* rightBoundary = new int[height];
+  std::vector<cv::Point2d> rightPath;
+  rightPath.push_back(corners[TOP]);
+  rightPath.push_back(corners[RIGHT]);
+  rightPath.push_back(corners[BOTTOM]);
+  GenerateBoundary(rightBoundary, rightPath, top, true);
+
+  // copy vtk->itk
+  CopyToItkData(vtkDepthData, itkData, top, bottom, leftBoundary, rightBoundary);
+}
+
+//----------------------------------------------------------------------------
+void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateSkewLeftItkData(
+  vtkSmartPointer<vtkPolyData> vtkDepthData,
+  std::vector<itk::Point<double, 3>> &itkData,
+  std::vector<cv::Point2d> corners,
+  /*for testing*/
+  unsigned int dim[],
+  cv::Mat image)
+{
+  const char TOP = 0, BOTTOM = 1, LOWER_LEFT = 2, UPPER_LEFT = 3;
+  int top = corners[TOP].y, bottom = corners[BOTTOM].y;
+  int height = bottom - top;
+
+  //LOG_WARNING("TOP        " << corners[TOP].y);
+  //LOG_WARNING("BOTTOM     " << corners[BOTTOM].y);
+  //LOG_WARNING("UPPER LEFT " << corners[UPPER_LEFT].y);
+  //LOG_WARNING("LOWER LEFT " << corners[LOWER_LEFT].y);
+
+  // generate left boundary
+  int* leftBoundary = new int[height];
+  std::vector<cv::Point2d> leftPath;
+  leftPath.push_back(corners[TOP]);
+  leftPath.push_back(corners[UPPER_LEFT]);
+  leftPath.push_back(corners[LOWER_LEFT]);
+  leftPath.push_back(corners[BOTTOM]);
+  GenerateBoundary(leftBoundary, leftPath, top, LEFT_BOUNDARY);
+
+  // generate right boundary
+  int* rightBoundary = new int[height];
+  std::vector<cv::Point2d> rightPath;
+  rightPath.push_back(corners[TOP]);
+  rightPath.push_back(corners[BOTTOM]);
+  GenerateBoundary(rightBoundary, rightPath, top, RIGHT_BOUNDARY);
+
+  // copy vtk->itk
+  CopyToItkData(vtkDepthData, itkData, top, bottom, leftBoundary, rightBoundary);
+}
+
+//----------------------------------------------------------------------------
+void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateSkewRightItkData(
+  vtkSmartPointer<vtkPolyData> vtkDepthData,
+  std::vector<itk::Point<double, 3>> &itkData,
+  std::vector<cv::Point2d> corners,
+  /*for testing*/
+  unsigned int dim[],
+  cv::Mat image)
+{
+  const char TOP = 0, UPPER_RIGHT = 1, LOWER_RIGHT = 2, BOTTOM = 3;
+  int top = corners[TOP].y;
+  int bottom = corners[BOTTOM].y;
+  int height = bottom - top + 1;
+
+  //LOG_WARNING("TOP          x: " << corners[TOP].x << " y: " << corners[TOP].y);
+  //LOG_WARNING("BOTTOM       X: " << corners[BOTTOM].x << " y: " << corners[BOTTOM].y);
+  //LOG_WARNING("UPPER RIGHT  x: " << corners[UPPER_RIGHT].x << " y: " << corners[UPPER_RIGHT].y);
+  //LOG_WARNING("LOWER RIGHT  x: " << corners[LOWER_RIGHT].x << " y: " << corners[LOWER_RIGHT].y);
+
+  // generate left boundary
+  int* leftBoundary = new int[height];
+  std::vector<cv::Point2d> leftPath;
+  leftPath.push_back(corners[TOP]);
+  leftPath.push_back(corners[BOTTOM]);
+  GenerateBoundary(leftBoundary, leftPath, top, LEFT_BOUNDARY);
+
+  // generate right boundary
+  int* rightBoundary = new int[height];
+  std::vector<cv::Point2d> rightPath;
+  rightPath.push_back(corners[TOP]);
+  rightPath.push_back(corners[UPPER_RIGHT]);
+  rightPath.push_back(corners[LOWER_RIGHT]);
+  rightPath.push_back(corners[BOTTOM]);
+  GenerateBoundary(rightBoundary, rightPath, top, RIGHT_BOUNDARY);
+
+  // copy vtk->itk
+  CopyToItkData(vtkDepthData, itkData, top, bottom, leftBoundary, rightBoundary);
+}
+
+//----------------------------------------------------------------------------
+void vtkPlusOpticalMarkerTracker::vtkInternal::CopyToItkData(
   vtkSmartPointer<vtkPolyData> vtkDepthData,
   std::vector<itk::Point<double, 3>> &itkData,
   int top,
   int bottom,
   int *leftBoundary,
-  int *rightBoundary,
-  cv::Mat image)
+  int *rightBoundary)
 {
   itk::Point<double, 3> itkPoint;
   // for testing
@@ -424,14 +750,7 @@ void vtkPlusOpticalMarkerTracker::CopyToItkData(
   for (int yPx = top; yPx <= bottom; yPx++)
   {
     for (int xPx = leftBoundary[yPx - top]; xPx <= rightBoundary[yPx - top]; xPx++)
-    {
-      // color in image for visualization
-      cv::Vec3b color = image.at<cv::Vec3b>(cv::Point(xPx, yPx));
-      color[0] = 0;
-      color[1] = 0;
-      color[2] = 255;
-      //image.at<cv::Vec3b>(cv::Point(xPx, yPx)) = color;
-
+    { 
       // TODO: Use non hard-coded dimension
       vtkIdType ptId = 640 * yPx + xPx;
       double vtkPoint[3];
@@ -488,156 +807,7 @@ void vtkPlusOpticalMarkerTracker::CopyToItkData(
 }
 
 //----------------------------------------------------------------------------
-float vtkPlusOpticalMarkerTracker::DetermineSlope(cv::Point2d corner1, cv::Point2d corner2)
-{
-  if (corner1.y == corner2.y)
-  {
-    return 0.0;
-  }
-  else
-  {
-    return ((float)(corner1.x - corner2.x)) / (corner1.y - corner2.y);
-  }
-}
-
-//----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::GenerateBoundary(int* boundary, std::vector<cv::Point2d> corners, int top, bool isRight)
-{
-  int numSegments = corners.size() - 1;
-
-  for (int segIndex = 0; segIndex < numSegments; segIndex++)
-  {
-    int segTop = corners[segIndex].y;
-    int segBottom = corners[segIndex + 1].y;
-    float mPx = DetermineSlope(corners[segIndex], corners[segIndex + 1]);
-    int x1Px = corners[segIndex].x;
-    int y1Px = corners[segIndex].y;
-    for (int yPx = segTop; yPx <= segBottom; yPx++)
-    {
-      boundary[yPx - top] = mPx * (yPx - y1Px) + x1Px;
-    }
-  }
-}
-
-//----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::GenerateSkewLeftItkData(
-  vtkSmartPointer<vtkPolyData> vtkDepthData,
-  std::vector<itk::Point<double, 3>> &itkData,
-  std::vector<cv::Point2d> corners,
-  /*for testing*/
-  unsigned int dim[],
-  cv::Mat image)
-{
-  const char TOP = 0, BOTTOM = 1, LOWER_LEFT = 2, UPPER_LEFT = 3;
-  int top = corners[TOP].y, bottom = corners[BOTTOM].y;
-  int height = bottom - top;
-
-  //LOG_WARNING("TOP        " << corners[TOP].y);
-  //LOG_WARNING("BOTTOM     " << corners[BOTTOM].y);
-  //LOG_WARNING("UPPER LEFT " << corners[UPPER_LEFT].y);
-  //LOG_WARNING("LOWER LEFT " << corners[LOWER_LEFT].y);
-
-  // generate left boundary
-  int* leftBoundary = new int[height];
-  std::vector<cv::Point2d> leftPath;
-  leftPath.push_back(corners[TOP]);
-  leftPath.push_back(corners[UPPER_LEFT]);
-  leftPath.push_back(corners[LOWER_LEFT]);
-  leftPath.push_back(corners[BOTTOM]);
-  GenerateBoundary(leftBoundary, leftPath, top, LEFT_BOUNDARY);
-
-  // generate right boundary
-  int* rightBoundary = new int[height];
-  std::vector<cv::Point2d> rightPath;
-  rightPath.push_back(corners[TOP]);
-  rightPath.push_back(corners[BOTTOM]);
-  GenerateBoundary(rightBoundary, rightPath, top, RIGHT_BOUNDARY);
-
-  // copy vtk->itk
-  CopyToItkData(vtkDepthData, itkData, top, bottom, leftBoundary, rightBoundary, image);
-}
-
-//----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::GenerateSkewRightItkData(
-  vtkSmartPointer<vtkPolyData> vtkDepthData,
-  std::vector<itk::Point<double, 3>> &itkData,
-  std::vector<cv::Point2d> corners,
-  /*for testing*/
-  unsigned int dim[],
-  cv::Mat image)
-{
-  const char TOP = 0, UPPER_RIGHT = 1, LOWER_RIGHT = 2, BOTTOM = 3;
-  int top = corners[TOP].y;
-  int bottom = corners[BOTTOM].y;
-  int height = bottom - top + 1;
-
-  //LOG_WARNING("TOP          x: " << corners[TOP].x << " y: " << corners[TOP].y);
-  //LOG_WARNING("BOTTOM       X: " << corners[BOTTOM].x << " y: " << corners[BOTTOM].y);
-  //LOG_WARNING("UPPER RIGHT  x: " << corners[UPPER_RIGHT].x << " y: " << corners[UPPER_RIGHT].y);
-  //LOG_WARNING("LOWER RIGHT  x: " << corners[LOWER_RIGHT].x << " y: " << corners[LOWER_RIGHT].y);
-
-  // generate left boundary
-  int* leftBoundary = new int[height];
-  std::vector<cv::Point2d> leftPath;
-  leftPath.push_back(corners[TOP]);
-  leftPath.push_back(corners[BOTTOM]);
-  GenerateBoundary(leftBoundary, leftPath, top, LEFT_BOUNDARY);
-
-  // generate right boundary
-  int* rightBoundary = new int[height];
-  std::vector<cv::Point2d> rightPath;
-  rightPath.push_back(corners[TOP]);
-  rightPath.push_back(corners[UPPER_RIGHT]);
-  rightPath.push_back(corners[LOWER_RIGHT]);
-  rightPath.push_back(corners[BOTTOM]);
-  GenerateBoundary(rightBoundary, rightPath, top, RIGHT_BOUNDARY);
-
-  // copy vtk->itk
-  CopyToItkData(vtkDepthData, itkData, top, bottom, leftBoundary, rightBoundary, image);
-}
-
-//----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::GenerateRotatedItkData(
-  vtkSmartPointer<vtkPolyData> vtkDepthData,
-  std::vector<itk::Point<double, 3>> &itkData,
-  std::vector<cv::Point2d> corners,
-  /*for testing*/
-  unsigned int dim[],
-  cv::Mat image)
-{
-  const char TOP = 0, RIGHT = 1, BOTTOM = 2, LEFT = 3;
-  int top = corners[TOP].y;
-  int bottom = corners[BOTTOM].y;
-  int height = bottom - top + 1;
-
-  //LOG_WARNING("TOP    x:" << corners[TOP].x << " y: " << corners[TOP].y);
-  //LOG_WARNING("BOTTOM x:" << corners[BOTTOM].x << " y: " << corners[BOTTOM].y);
-  //LOG_WARNING("LEFT   x:" << corners[LEFT].x << " y: " << corners[LEFT].y);
-  //LOG_WARNING("RIGHT  x:" << corners[RIGHT].x << " y: " << corners[RIGHT].y);
-  //LOG_WARNING("height: " << height);
-
-  // generate left boundary
-  int* leftBoundary = new int[height];
-  std::vector<cv::Point2d> leftPath;
-  leftPath.push_back(corners[TOP]);
-  leftPath.push_back(corners[LEFT]);
-  leftPath.push_back(corners[BOTTOM]);
-  GenerateBoundary(leftBoundary, leftPath, top, false);
-
-  // generate right boundary
-  int* rightBoundary = new int[height];
-  std::vector<cv::Point2d> rightPath;
-  rightPath.push_back(corners[TOP]);
-  rightPath.push_back(corners[RIGHT]);
-  rightPath.push_back(corners[BOTTOM]);
-  GenerateBoundary(rightBoundary, rightPath, top, true);
-
-  // copy vtk->itk
-  CopyToItkData(vtkDepthData, itkData, top, bottom, leftBoundary, rightBoundary, image);
-}
-
-//----------------------------------------------------------------------------
-void vtkPlusOpticalMarkerTracker::GenerateItkData(
+void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateItkData(
   vtkSmartPointer<vtkPolyData> vtkDepthData,
   std::vector<itk::Point<double, 3>> &itkData,
   std::vector<cv::Point2d> corners,
@@ -662,266 +832,9 @@ void vtkPlusOpticalMarkerTracker::GenerateItkData(
 }
 
 //----------------------------------------------------------------------------
-double* vtkPlusOpticalMarkerTracker::GetXAxis(
-  vtkSmartPointer<vtkPolyData> vtkDepthData,
-  std::vector<cv::Point2d> corners,
-  cv::Mat image)
-{
-  cv::Point2d xBeginPx, xEndPx;
-
-  xBeginPx.x = round((float)(corners[0].x + corners[3].x)/2);
-  xBeginPx.y = round((float)(corners[0].y + corners[3].y)/2);
-  xEndPx.x = round((float)(corners[1].x + corners[2].x)/2);
-  xEndPx.y = round((float)(corners[1].y + corners[2].y)/2);
-
-  double* x_axis = new double[3];
-  x_axis[0] = 0;
-  x_axis[1] = 0;
-  x_axis[2] = 0;
-
-  // compute slope of x_axis in image
-  double mPx;
-  if (xBeginPx.y == xEndPx.y)
-  {
-    mPx = 0.0;
-  }
-  else
-  {
-    mPx = ((float)(xBeginPx.y - xEndPx.y)) / (xBeginPx.x- xEndPx.x);
-  }
-
-  vtkIdType ptId = 640 * xBeginPx.y + xBeginPx.x;
-  double* prevVtkPoint = new double[3];
-  vtkDepthData->GetPoint(ptId, prevVtkPoint);
-  int count = 0;
-
-  // find direction of x_axis in spatial coordinates
-  if (xBeginPx.x < xEndPx.x)
-  {
-    // x axis goes left of image to right
-    for (int xPx = xBeginPx.x + 1; xPx <= xEndPx.x; xPx++)
-    {
-      int yPx = xBeginPx.y + mPx*(xPx - xBeginPx.x);
-      // color in image for visualization
-      cv::Vec3b color = image.at<cv::Vec3b>(cv::Point(xPx, yPx));
-      color[0] = 0;
-      color[1] = 0;
-      color[2] = 255;
-      image.at<cv::Vec3b>(cv::Point(xPx, yPx)) = color;
-
-      vtkIdType ptId = 640 * yPx + xPx;
-      double vtkPoint[3];
-      vtkDepthData->GetPoint(ptId, vtkPoint);
-
-      if (vtkPoint[2] > 50 && vtkPoint[2] < 2000 && prevVtkPoint[2] > 50 && prevVtkPoint[2] < 2000)
-      {
-        x_axis[0] += vtkPoint[0] - prevVtkPoint[0];
-        x_axis[1] += vtkPoint[1] - prevVtkPoint[1];
-        x_axis[2] += vtkPoint[2] - prevVtkPoint[2];
-        count++;
-      }
-      prevVtkPoint = vtkPoint;
-    }
-  }
-  else
-  {
-    // x axis goes right of image to left
-    for (int xPx = xBeginPx.x - 1; xPx >= xEndPx.x; xPx--)
-    {
-      int yPx = xBeginPx.y + mPx*(xPx - xBeginPx.x);
-      // color in image for visualization
-      cv::Vec3b color = image.at<cv::Vec3b>(cv::Point(xPx, yPx));
-      color[0] = 0;
-      color[1] = 255;
-      color[2] = 0;
-      image.at<cv::Vec3b>(cv::Point(xPx, yPx)) = color;
-
-      vtkIdType ptId = 640 * yPx + xPx;
-      double vtkPoint[3];
-      vtkDepthData->GetPoint(ptId, vtkPoint);
-
-      if (vtkPoint[2] > 50 && vtkPoint[2] < 2000 && prevVtkPoint[2] > 50 && prevVtkPoint[2] < 2000)
-      {
-        x_axis[0] += vtkPoint[0] - prevVtkPoint[0];
-        x_axis[1] += vtkPoint[1] - prevVtkPoint[1];
-        x_axis[2] += vtkPoint[2] - prevVtkPoint[2];
-        count++;
-      }
-      prevVtkPoint = vtkPoint;
-    }
-
-    x_axis[0] /= count;
-    x_axis[1] /= count;
-    x_axis[2] /= count;
-  }
-
-  return x_axis;
-}
-
-//----------------------------------------------------------------------------
-cv::Point2d vtkPlusOpticalMarkerTracker::GetMarkerCenter(std::vector<cv::Point2d> corners) {
-  cv::Point2d center;
-  // slope of lines
-  // TODO: handle special case where corners have same x coordinate -> inf slope -> crash
-  double m02 = (corners[0].y - corners[2].y) / (corners[0].x - corners[2].x);
-  double m13 = (corners[1].y - corners[3].y) / (corners[1].x - corners[3].x);
-  // points on lines
-  int x0 = corners[0].x, y0 = corners[0].y;
-  int x1 = corners[1].x, y1 = corners[1].y;
-
-  float x_center = (m02*x0 - m13*x1 + y1 - y0) / (m02 - m13);
-  center.x = round(x_center);
-  center.y = round(m02*(x_center - x0) + y0);
-
-  //LOG_INFO("center x: " << center.x << "center y: " << center.y);
-
-  //LOG_INFO("0+2x: " << (corners[0].x + corners[2].x) / 2);
-  //LOG_INFO("0+2y: " << (corners[0].y + corners[2].y) / 2);
-  //LOG_INFO("1+3x: " << (corners[1].x + corners[3].x) / 2);
-  //LOG_INFO("1+3y: " << (corners[1].y + corners[3].y) / 2);
-
-  return center;
-}
-
-//----------------------------------------------------------------------------
-double* vtkPlusOpticalMarkerTracker::MarkerCenterImageToSpatial(vtkSmartPointer<vtkPolyData> vtkDepthData, cv::Point2d imageCenter, cv::Mat image)
-{
-  //cv::circle(image, markerImageCenter, 2, cv::Scalar(0, 0, 255), -1);
-  return new double[3];
-}
-
-//----------------------------------------------------------------------------
-float vtkPlusOpticalMarkerTracker::VectorAngleDeg(vnl_vector<double> xAxis, vnl_vector<double> zAxis)
-{
-  float dotProduct = xAxis(0)*zAxis(0) + xAxis(1)*zAxis(1) + xAxis(2)*zAxis(2);
-  return abs(acos(dotProduct) * 180 / PI); 
-}
-
-//----------------------------------------------------------------------------
-/*inline*/ void vtkPlusOpticalMarkerTracker::ComputePlaneTransform(
-  vtkSmartPointer<vtkMatrix4x4> MarkerToDepthCamera,
-  double x_axis[],
-  double z_axis[],
-  double center[])
-{
-  //vnl_matrix<double> CameraPoints(3, 3, 0.0);
-  //vnl_matrix<double> MarkerPoints(3, 3, 0.0);
-  // TODO: add homogenous coordinate to all raw array vectors
-  double z_expected[4] = { 0, 0, -1, 0 };
-  z_axis[1] = -z_axis[1]; // left-handed to right-handed coord sys conversion
-  float ZtoZAngle = vtkMath::Dot(z_expected, z_axis);
-  LOG_INFO("ZtoZangle: " << ZtoZAngle);
-  if (ZtoZAngle < 0)
-  {
-    // normal is pointing towards back of marker, flip it, as below
-    z_axis[0] *= -1;
-    z_axis[1] *= -1;
-    z_axis[2] *= -1;
-    z_axis[3] *= -1; // does the homogenous coordinate need to be flipped?
-  }
-  vnl_vector<double> xGuess(3, 3, x_axis);
-  vnl_vector<double> zAxis(3, 3, z_axis);
-  xGuess.normalize();
-  zAxis.normalize();
-
-  double x_theoretical[3] = { 1, 0, 0 };
-  vnl_vector<double> xTheoretical(3, 3, x_theoretical);
-  double y_theoretical[3] = { 0, 1, 0 };
-  vnl_vector<double> yTheoretical(3, 3, y_theoretical);
-
-  vnl_vector<double> yAxis;
-  vnl_vector<double> xAxis;
-
-  LOG_ERROR(VectorAngleDeg(xGuess, zAxis));
-  if (VectorAngleDeg(xGuess, zAxis) > 10)
-  {
-    LOG_ERROR("Using x_axis from aruco");
-    yAxis = vnl_cross_3d(zAxis, xGuess);
-    xAxis = vnl_cross_3d(yAxis, zAxis);
-  }
-  else if (VectorAngleDeg(xTheoretical, zAxis) > 10)
-  {
-    LOG_ERROR("using theoretical x_axis");
-    yAxis = vnl_cross_3d(zAxis, xTheoretical);
-    xAxis = vnl_cross_3d(yAxis, zAxis);
-  }
-  else
-  {
-    LOG_ERROR("Using theoretical y_axis as perpendicular to Z");
-    xAxis = vnl_cross_3d(yTheoretical, zAxis);
-    yAxis = vnl_cross_3d(zAxis, xAxis);
-  }
-
-  vnl_matrix<double> Rotation(3, 3);
-  Rotation.set_column(0, xAxis);
-  Rotation.set_column(1, yAxis);
-  Rotation.set_column(2, zAxis);
-  /*
-  // camera x axis
-  CameraPoints.put(0, 0, 1);
-  CameraPoints.put(0, 1, 0);
-  CameraPoints.put(0, 2, 0);
-  // camera z axis
-  CameraPoints.put(1, 0, 0);
-  CameraPoints.put(1, 1, 1);
-  CameraPoints.put(1, 2, 0);
-  // camera origin
-  CameraPoints.put(2, 0, 0);
-  CameraPoints.put(2, 1, 0);
-  CameraPoints.put(2, 2, 1);
-
-  // marker x axis
-  MarkerPoints.put(0, 0, xAxis(0));
-  MarkerPoints.put(0, 1, xAxis(1));
-  MarkerPoints.put(0, 2, xAxis(2));
-  // marker z axis (n)
-  MarkerPoints.put(1, 0, yAxis(0));
-  MarkerPoints.put(1, 1, yAxis(1));
-  MarkerPoints.put(1, 2, yAxis(2));
-
-  // marker origin (center of mass of marker)
-  MarkerPoints.put(2, 0, zAxis(0));
-  MarkerPoints.put(2, 1, zAxis(1));
-  MarkerPoints.put(2, 2, zAxis(2));
-
-  //MarkerPoints.put(2, 0, center[0]);
-  //MarkerPoints.put(2, 1, center[1]);
-  //MarkerPoints.put(2, 2, center[2]);
-
-  vnl_svd<double> CameraToMarker(CameraPoints.transpose() * MarkerPoints);
-  vnl_matrix<double> V = CameraToMarker.V();
-  vnl_matrix<double> U = CameraToMarker.U();
-  vnl_matrix<double> Rotation = V * U.transpose();
-
-  LOG_WARNING("ROTATION: ");
-  cout << Rotation;
-  */
-  //TODO: generate 4x4 transform here
-  MarkerToDepthCamera->Identity();
-  for (int row = 0; row <= 2; row++)
-  {
-    
-    for (int col = 0; col <= 2; col++)
-      MarkerToDepthCamera->SetElement(row, col, Rotation(row, col));
-  }
-  MarkerToDepthCamera->SetElement(0, 3, center[0]);
-  MarkerToDepthCamera->SetElement(1, 3, -center[1]);
-  MarkerToDepthCamera->SetElement(2, 3, center[2]);
-
-  vtkSmartPointer<vtkMatrix4x4> DepthAxisToPlusTrackerAxis = vtkSmartPointer<vtkMatrix4x4>::New();
-  DepthAxisToPlusTrackerAxis->Zero();
-  DepthAxisToPlusTrackerAxis->SetElement(0, 0, 1);
-  DepthAxisToPlusTrackerAxis->SetElement(1, 1, 1);
-  DepthAxisToPlusTrackerAxis->SetElement(2, 2, 1);
-  DepthAxisToPlusTrackerAxis->SetElement(3, 3, 1);
-
-  //vtkMatrix4x4::Multiply4x4(DepthAxisToPlusTrackerAxis, MarkerToDepthCamera, MarkerToDepthCamera);
-}
-
-//----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
 {
-  if (this->TrackingMethod == TRACKING_OPTICAL)
+  if (this->Internal->TrackingMethod == TRACKING_OPTICAL)
   {
     if (this->InputChannels.size() != 1)
     {
@@ -929,7 +842,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
       return PLUS_FAIL;
     }
   }
-  else if (this->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH)
+  else if (this->Internal->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH)
   {
     if (this->InputChannels.size() != 2)
     {
@@ -965,7 +878,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
   // grab tracked frames to process from buffer
   PlusTrackedFrame trackedVideoFrame;
   PlusTrackedFrame trackedPolyDataFrame;
-  if (this->TrackingMethod == TRACKING_OPTICAL || this->TrackingMethod == TRACKING_OPTICAL_AND_DEPTH)
+  if (this->Internal->TrackingMethod == TRACKING_OPTICAL || this->Internal->TrackingMethod == TRACKING_OPTICAL_AND_DEPTH)
   {
     // get optical video data
     if (this->InputChannels[CHANNEL_INDEX_VIDEO]->GetTrackedFrame(trackedVideoFrame) != PLUS_SUCCESS)
@@ -975,7 +888,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
       return PLUS_FAIL;
     }
   }
-  if (this->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH)
+  if (this->Internal->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH)
   {
     // get depth PolyData
     if (this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetTrackedFrame(oldestTrackingTimestamp, trackedPolyDataFrame) != PLUS_SUCCESS)
@@ -1058,7 +971,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
           cv::Mat Tvec = toolIt->MarkerPoseTracker.getTvec();
           cv::Mat Rmat(3, 3, CV_32FC1);
           cv::Rodrigues(Rvec, Rmat);
-          this->Internal->BuildTransformMatrix(toolIt->OpticalMarkerToCamera, Rmat, Tvec);
+          this->Internal->BuildOpticalTransformMatrix(toolIt->OpticalMarkerToCamera, Rmat, Tvec);
 
           // UPDATE DEPTH TRANSFORM
           // get marker corners
@@ -1067,7 +980,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
 
           // copy data from inside the marker into data structure for RANSAC plane algorithm
           std::vector<itk::Point<double, 3>> itkPlane;
-          GenerateItkData(markerPolyData, itkPlane, corners, dim, image);
+          this->Internal->GenerateItkData(markerPolyData, itkPlane, corners, dim, image);
 
           cv::circle(image, corners[0], 2, cv::Scalar(0, 0, 255), -1);
           cv::circle(image, corners[1], 2, cv::Scalar(255, 0, 0), -1);
@@ -1107,7 +1020,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
             return PLUS_SUCCESS;
           }
 
-          // RANSAC causes massive pauses in tracking... Is it worth it?
+          //TODO: RANSAC causes massive pauses in tracking... how do we make it faster?
 
           /*try
           {
@@ -1147,14 +1060,13 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
           xAxis[3] = 0;
 
           // center is currently computed using the center of mass of the plane from least squares,
-          // this could be updated to be the intersection of a line from (0,0,0) to the plane center
           double center[4];
           center[0] = ransacParameterResult[3];
           center[1] = ransacParameterResult[4];
           center[2] = ransacParameterResult[5];
           center[3] = 0;
 
-          ComputePlaneTransform(toolIt->DepthMarkerToCamera, xAxis, zAxis, center);
+          this->Internal->ComputePlaneTransform(toolIt->DepthMarkerToCamera, xAxis, zAxis, center);
           ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->OpticalMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
           ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->DepthMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
         }

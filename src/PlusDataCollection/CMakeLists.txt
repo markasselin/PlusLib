@@ -556,6 +556,8 @@ IF(PLUS_USE_OPTICAL_MARKER_TRACKER)
 
   LIST(APPEND ${PROJECT_NAME}_LIBS
     aruco
+    ITKCommon
+    itkvnl
     )
 
   SET(_entries)
