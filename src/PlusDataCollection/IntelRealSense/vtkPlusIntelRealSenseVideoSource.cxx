@@ -137,7 +137,6 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalStopRecording()
 PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
 {
   // wait until both optical and depth frames are ready
-  LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate started");
   RS::Status acquireFrameStatus = this->Internal->SenseManager->AcquireFrame(true, 1000);
   if (acquireFrameStatus < RS::Status::STATUS_NO_ERROR)
   {
@@ -146,7 +145,6 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
     return PLUS_FAIL;
   }
 
-  LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before QuerySample");
   // get frame from RealSense
   RS::Capture::Sample *sample = this->Internal->SenseManager->QuerySample();
 
@@ -161,7 +159,6 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
     //RS::Image* imageColor = sample->color;
     this->Internal->ColorImage = sample->color;
     RS::ImageData dataColor;
-    LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before ColorImage->AcquireAccess");
     this->Internal->ColorImage->AcquireAccess(RS::ImageAccess::ACCESS_READ, RS::PixelFormat::PIXEL_FORMAT_RGB, &dataColor);
     
     PixelCodec::ConvertToBmp24(PixelCodec::ComponentOrder_RGB,
@@ -171,8 +168,6 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
       dataColor.planes[0],
       (unsigned char*)this->Internal->ColorStream->PlusFrame.GetScalarPointer());
       
-    
-    LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before ColorImage->ReleaseAccess");
     this->Internal->ColorImage->ReleaseAccess(&dataColor);
   }
   
@@ -183,10 +178,7 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
   {
     this->Internal->DepthImage = sample->depth;
     RS::ImageData dataDepth;
-    LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before DepthImage->AcquireAccess");
     this->Internal->DepthImage->AcquireAccess(RS::ImageAccess::ACCESS_READ, RS::PixelFormat::PIXEL_FORMAT_DEPTH, &dataDepth);
-
-    LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before Device->CreateProjection");
     this->Internal->Projection = this->Internal->Device->CreateProjection();
     
     RS::Image* depthImageMappedToColor = this->Internal->Projection->CreateDepthImageMappedToColor(
@@ -215,15 +207,11 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
     polydata->SetPoints(points);
     polydata->SetVerts(vertices);
     
-    
-    LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before projection releases");
     depthImageMappedToColor->Release();
     this->Internal->Projection->Release();
     this->Internal->DepthImage->ReleaseAccess(&dataDepth);
   }
   
-  
-  LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before addItem");
   // Write data to buffers
   if (this->OutputType == OPTICAL || this->OutputType == OPTICAL_AND_DEPTH)
   {
@@ -241,9 +229,7 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalUpdate()
 
   this->Modified();
   this->FrameNumber++;
-  LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate before SenseManager->ReleaseFrame");
   this->Internal->SenseManager->ReleaseFrame();
-  LOG_INFO("vtkPlusIntelRealSenseVideoSource::InternalUpdate completed");
   return PLUS_SUCCESS;
 }
 
@@ -419,13 +405,17 @@ PlusStatus vtkPlusIntelRealSenseVideoSource::InternalConnect()
     this->Internal->ColorStream->PlusSource->SetPixelType(VTK_UNSIGNED_CHAR);
     this->Internal->ColorStream->PlusSource->SetImageType(US_IMG_RGB_COLOR);
     this->Internal->ColorStream->PlusSource->SetNumberOfScalarComponents(3);
-    this->Internal->ColorStream->PlusSource->SetInputFrameSize(this->Internal->ColorStream->FrameSizePx);
+    FrameSizeType temp;
+    temp[0] = this->Internal->ColorStream->FrameSizePx[0];
+    temp[1] = this->Internal->ColorStream->FrameSizePx[1];
+    temp[2] = 1;
+    this->Internal->ColorStream->PlusSource->SetInputFrameSize(temp);
 
     // configure optical frame
     this->Internal->ColorStream->PlusFrame.SetImageType(this->Internal->ColorStream->PlusSource->GetImageType());
     this->Internal->ColorStream->PlusFrame.SetImageOrientation(this->Internal->ColorStream->PlusSource->GetInputImageOrientation());
     this->Internal->ColorStream->PlusFrame.SetImageType(US_IMAGE_TYPE::US_IMG_RGB_COLOR);
-    this->Internal->ColorStream->PlusFrame.AllocateFrame(this->Internal->ColorStream->FrameSizePx, VTK_UNSIGNED_CHAR, 3);
+    this->Internal->ColorStream->PlusFrame.AllocateFrame(temp, VTK_UNSIGNED_CHAR, 3);
   }
 
   if (this->OutputType == OPTICAL_AND_DEPTH)

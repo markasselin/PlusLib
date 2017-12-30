@@ -21,10 +21,10 @@ class vtkPlusDataCollectionExport vtkPlusOpticalMarkerTracker : public vtkPlusDe
 public:
 
   /*! Defines whether or not depth stream is used. */
-  enum TRACKING_METHOD
+  enum INPUT_TYPE
   {
-    TRACKING_OPTICAL,
-    TRACKING_OPTICAL_AND_DEPTH
+    INPUT_RGB_ONLY,
+    INPUT_RGB_AND_DEPTH
   };
 
   /*! Defines orientation of marker in frame */

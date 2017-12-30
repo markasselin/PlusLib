@@ -57,6 +57,7 @@ See License.txt for details.
 #include "opencv2/core.hpp"
 #include "opencv2/imgproc.hpp"
 
+//TODO: Video and polydata indices should be set based on the input channels.
 // TODO: clean this up... shouldn't have global vars (move them into their respective methods)
 static const int CHANNEL_INDEX_VIDEO = 0;
 static const int CHANNEL_INDEX_POLYDATA = 1;
@@ -78,17 +79,28 @@ namespace
       MARKER_MAP
     };
 
-    TrackedTool(int markerId, float markerSizeMm, const std::string& toolSourceId)
+    // Defines the method of data fusion.
+    enum DATA_FUSION_METHOD
+    {
+      FUSION_RGB_ONLY,
+      FUSION_DEPTH_ONLY,
+      FUSION_COMPONENTS,
+      FUSION_KALMAN
+    };
+
+    TrackedTool(int markerId, float markerSizeMm, const std::string& toolSourceId, DATA_FUSION_METHOD fusionMethod)
       : ToolMarkerType(SINGLE_MARKER)
       , MarkerId(markerId)
       , MarkerSizeMm(markerSizeMm)
       , ToolSourceId(toolSourceId)
+      , DataFusionMethod(fusionMethod)
     {
     }
-    TrackedTool(const std::string& markerMapFile, const std::string& toolSourceId)
+    TrackedTool(const std::string& markerMapFile, const std::string& toolSourceId, DATA_FUSION_METHOD fusionMethod)
       : ToolMarkerType(MARKER_MAP)
       , MarkerMapFile(markerMapFile)
       , ToolSourceId(toolSourceId)
+      , DataFusionMethod(fusionMethod)
     {
     }
 
@@ -96,6 +108,7 @@ namespace
     TOOL_MARKER_TYPE ToolMarkerType;
     float MarkerSizeMm;
 
+    DATA_FUSION_METHOD DataFusionMethod;
     std::string MarkerMapFile;
     std::string ToolSourceId;
     std::string ToolName;
@@ -124,7 +137,6 @@ public:
     CameraParameters = nullptr;
   }
 
-public:
   /*
    * Builds optical transform out of aruco pose tracking data
    */
@@ -174,7 +186,7 @@ public:
     std::vector<itk::Point<double, 3>> &itkData,
     std::vector<cv::Point2d> corners,
     /*for testing*/
-    unsigned int dim[],
+    FrameSizeType dim,
     cv::Mat image
   );
 
@@ -186,7 +198,7 @@ public:
     std::vector<itk::Point<double, 3>> &itkData,
     std::vector<cv::Point2d> corners,
     /*for testing*/
-    unsigned int dim[],
+    FrameSizeType dim,
     cv::Mat image
   );
 
@@ -198,7 +210,7 @@ public:
     std::vector<itk::Point<double, 3>> &itkData,
     std::vector<cv::Point2d> corners,
     /*for testing*/
-    unsigned int dim[],
+    FrameSizeType dim,
     cv::Mat image
   );
 
@@ -221,7 +233,7 @@ public:
     std::vector<itk::Point<double, 3>> &itkData,
     std::vector<cv::Point2d> corners,
     /*for testing*/
-    unsigned int dim[],
+    FrameSizeType dim,
     cv::Mat image
   );
 
@@ -229,7 +241,7 @@ public:
   //PlusStatus DepthPlaneFit()
 
   std::string               CameraCalibrationFile;
-  TRACKING_METHOD           TrackingMethod;
+  INPUT_TYPE                InputType;
   std::string               MarkerDictionary;
   std::vector<TrackedTool>  Tools;
 
@@ -269,7 +281,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
   XML_FIND_DEVICE_ELEMENT_REQUIRED_FOR_READING(deviceConfig, rootConfigElement);
 
   XML_READ_STRING_ATTRIBUTE_NONMEMBER_REQUIRED(CameraCalibrationFile, this->Internal->CameraCalibrationFile, deviceConfig);
-  XML_READ_ENUM2_ATTRIBUTE_NONMEMBER_OPTIONAL("TrackingMethod", this->Internal->TrackingMethod, deviceConfig, "OPTICAL", TRACKING_OPTICAL, "OPTICAL_AND_DEPTH", TRACKING_OPTICAL_AND_DEPTH);
+  XML_READ_ENUM2_ATTRIBUTE_NONMEMBER_OPTIONAL(InputType, this->Internal->InputType, deviceConfig, "RGB_ONLY", INPUT_RGB_ONLY, "RGB_AND_DEPTH", INPUT_RGB_AND_DEPTH);
   XML_READ_STRING_ATTRIBUTE_NONMEMBER_REQUIRED(MarkerDictionary, this->Internal->MarkerDictionary, deviceConfig);
 
   XML_FIND_NESTED_ELEMENT_REQUIRED(dataSourcesElement, deviceConfig, "DataSources");
@@ -298,6 +310,30 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
     PlusTransformName toolTransformName(toolId, this->GetToolReferenceFrameName());
     std::string toolSourceId = toolTransformName.GetTransformName();
 
+    TrackedTool::DATA_FUSION_METHOD fusionMethod = TrackedTool::FUSION_RGB_ONLY;
+    XML_READ_ENUM4_ATTRIBUTE_NONMEMBER_OPTIONAL(DataFusionMethod, fusionMethod, toolDataElement, "RGB_ONLY", TrackedTool::FUSION_RGB_ONLY, "DEPTH_ONLY", TrackedTool::FUSION_DEPTH_ONLY, "COMPONENTS", TrackedTool::FUSION_COMPONENTS, "KALMAN", TrackedTool::FUSION_KALMAN);
+
+    if (this->Internal->InputType == INPUT_RGB_ONLY)
+    {
+      if (fusionMethod == TrackedTool::FUSION_DEPTH_ONLY)
+      {
+        LOG_ERROR("Tracked tool '" << toolId << "' is requesting 'DEPTH_ONLY' data fusion but depth data is not provided to OpticalMarkerTracker. Please provide depth data and set InputType='RGB_AND_DEPTH' or use DataFusionMethod='RGB_ONLY'.");
+        return PLUS_FAIL;
+      }
+      else if (fusionMethod == TrackedTool::FUSION_COMPONENTS)
+      {
+        LOG_ERROR("Tracked tool '" << toolId << "' is requesting 'COMPONENTS' data fusion but depth data is not provided to OpticalMarkerTracker. Please provide depth data and set InputType='RGB_AND_DEPTH' or use DataFusionMethod='RGB_ONLY'.");
+        return PLUS_FAIL;
+      }
+      else if (fusionMethod == TrackedTool::FUSION_KALMAN)
+      {
+        LOG_ERROR("Tracked tool '" << toolId << "' is requesting 'KALMAN' data fusion but depth data is not provided to OpticalMarkerTracker. Please provide depth data and set InputType='RGB_AND_DEPTH' or use DataFusionMethod='RGB_ONLY'.");
+        return PLUS_FAIL;
+      }
+    }
+
+    // TODO: Check if both rgb and depth provided. If not, allow only FUSION_RGB_ONLY as DataFusionMethod.
+
     if (toolDataElement->GetAttribute("MarkerId") != NULL && toolDataElement->GetAttribute("MarkerSizeMm") != NULL)
     {
       // this tool is tracked by a single marker
@@ -305,7 +341,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
       toolDataElement->GetScalarAttribute("MarkerId", MarkerId);
       float MarkerSizeMm;
       toolDataElement->GetScalarAttribute("MarkerSizeMm", MarkerSizeMm);
-      TrackedTool newTool(MarkerId, MarkerSizeMm, toolSourceId);
+      TrackedTool newTool(MarkerId, MarkerSizeMm, toolSourceId, fusionMethod);
       this->Internal->Tools.push_back(newTool);
     }
     else if (toolDataElement->GetAttribute("MarkerMapFile") != NULL)
@@ -319,8 +355,6 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
     }
   }
 
-  //TODO: read tracking type from number of inputs
-  this->Internal->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH;
   return PLUS_SUCCESS;
 }
 
@@ -337,13 +371,13 @@ PlusStatus vtkPlusOpticalMarkerTracker::WriteConfiguration(vtkXMLDataElement* ro
   {
     deviceConfig->SetAttribute("MarkerDictionary", this->Internal->MarkerDictionary.c_str());
   }
-  switch (this->Internal->TrackingMethod)
+  switch (this->Internal->InputType)
   {
-  case TRACKING_OPTICAL:
-    deviceConfig->SetAttribute("TrackingMethod", "OPTICAL");
+  case INPUT_RGB_ONLY:
+    deviceConfig->SetAttribute("TrackingMethod", "RGB");
     break;
-  case TRACKING_OPTICAL_AND_DEPTH:
-    deviceConfig->SetAttribute("TrackingMethod", "OPTICAL_AND_DEPTH");
+  case INPUT_RGB_AND_DEPTH:
+    deviceConfig->SetAttribute("TrackingMethod", "RGB_AND_DEPTH");
     break;
   default:
     LOG_ERROR("Unknown tracking method passed to vtkPlusOpticalMarkerTracker::WriteConfiguration");
@@ -615,7 +649,7 @@ void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateRotatedItkData(
   std::vector<itk::Point<double, 3>> &itkData,
   std::vector<cv::Point2d> corners,
   /*for testing*/
-  unsigned int dim[],
+  FrameSizeType dim,
   cv::Mat image)
 {
   const char TOP = 0, RIGHT = 1, BOTTOM = 2, LEFT = 3;
@@ -655,7 +689,7 @@ void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateSkewLeftItkData(
   std::vector<itk::Point<double, 3>> &itkData,
   std::vector<cv::Point2d> corners,
   /*for testing*/
-  unsigned int dim[],
+  FrameSizeType dim,
   cv::Mat image)
 {
   const char TOP = 0, BOTTOM = 1, LOWER_LEFT = 2, UPPER_LEFT = 3;
@@ -693,7 +727,7 @@ void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateSkewRightItkData(
   std::vector<itk::Point<double, 3>> &itkData,
   std::vector<cv::Point2d> corners,
   /*for testing*/
-  unsigned int dim[],
+  FrameSizeType dim,
   cv::Mat image)
 {
   const char TOP = 0, UPPER_RIGHT = 1, LOWER_RIGHT = 2, BOTTOM = 3;
@@ -805,7 +839,7 @@ void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateItkData(
   std::vector<itk::Point<double, 3>> &itkData,
   std::vector<cv::Point2d> corners,
   /*for testing*/
-  unsigned int dim[],
+  FrameSizeType dim,
   cv::Mat image)
 {
   MARKER_ORIENTATION orientation = DetermineMarkerOrientation(corners);
@@ -827,7 +861,8 @@ void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateItkData(
 //----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
 {
-  if (this->Internal->TrackingMethod == TRACKING_OPTICAL)
+
+  if (this->Internal->InputType == INPUT_RGB_ONLY)
   {
     if (this->InputChannels.size() != 1)
     {
@@ -835,7 +870,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
       return PLUS_FAIL;
     }
   }
-  else if (this->Internal->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH)
+  else if (this->Internal->InputType = INPUT_RGB_AND_DEPTH)
   {
     if (this->InputChannels.size() != 2)
     {
@@ -850,15 +885,16 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     LOG_TRACE("OpticalMarkerTracker is not tracking, video data is not available yet. Device ID: " << this->GetDeviceId());
     return PLUS_SUCCESS;
   }
-  if (!this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetBulkDataAvailable())
+
+  if (this->Internal->InputType == INPUT_RGB_AND_DEPTH && !this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetBulkDataAvailable())
   {
-    LOG_TRACE("OpticalMarkerTracker is not tracking, video data is not available yet. Device ID: " << this->GetDeviceId());
+    LOG_TRACE("OpticalMarkerTracker is not tracking, depth data is not available yet. Device ID: " << this->GetDeviceId());
     return PLUS_SUCCESS;
   }
 
   // get timestamp of frame to process from PolyData (as it is added to the buffers after video)
   double oldestTrackingTimestamp(0);
-  if (this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetLatestTimestamp(oldestTrackingTimestamp) == PLUS_SUCCESS)
+  if (this->Internal->InputType == INPUT_RGB_AND_DEPTH && this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetLatestTimestamp(oldestTrackingTimestamp) == PLUS_SUCCESS)
   {
     if (this->LastProcessedInputDataTimestamp > oldestTrackingTimestamp)
     {
@@ -871,7 +907,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
   // grab tracked frames to process from buffer
   PlusTrackedFrame trackedVideoFrame;
   PlusTrackedFrame trackedPolyDataFrame;
-  if (this->Internal->TrackingMethod == TRACKING_OPTICAL || this->Internal->TrackingMethod == TRACKING_OPTICAL_AND_DEPTH)
+  if (this->Internal->InputType == INPUT_RGB_ONLY || this->Internal->InputType == INPUT_RGB_AND_DEPTH)
   {
     // get optical video data
     if (this->InputChannels[CHANNEL_INDEX_VIDEO]->GetTrackedFrame(trackedVideoFrame) != PLUS_SUCCESS)
@@ -881,7 +917,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
       return PLUS_FAIL;
     }
   }
-  if (this->Internal->TrackingMethod = TRACKING_OPTICAL_AND_DEPTH)
+  if (this->Internal->InputType == INPUT_RGB_AND_DEPTH)
   {
     // get depth PolyData
     if (this->InputChannels[CHANNEL_INDEX_POLYDATA]->GetTrackedFrame(oldestTrackingTimestamp, trackedPolyDataFrame) != PLUS_SUCCESS)
@@ -892,7 +928,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     }
   }
 
-  //TODO: for testing visaulize polydata
+  //TODO: to visualize polydata for testing purposes...
   if (false) {
     vtkSmartPointer<vtkPolyDataMapper> mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
     mapper->SetInputData(trackedPolyDataFrame.GetPolyData());
@@ -945,10 +981,10 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
   {
     // for SPIE 2017 to output both depth and optical transforms simultaneously
     // ignores depth named transforms
-    if (toolIt->ToolSourceId.find("Depth") != string::npos)
-    {
-      continue;
-    }
+    //if (toolIt->ToolSourceId.find("Depth") != string::npos)
+    //{
+    //  continue;
+    //}
 
     bool toolInFrame = false;
     for (vector<aruco::Marker>::iterator markerIt = begin(this->Internal->Markers); markerIt != end(this->Internal->Markers); ++markerIt)
@@ -965,102 +1001,106 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
           cv::Mat Rmat(3, 3, CV_32FC1);
           this->Internal->BuildOpticalTransformMatrix(toolIt->OpticalMarkerToCamera, Rvec, Tvec, Rmat);
 
-          // UPDATE DEPTH TRANSFORM
-          // get marker corners
-          std::vector<cv::Point2d> corners;
-          corners = markerIt->getCornersPx();
-
-          // copy data from inside the marker into data structure for RANSAC plane algorithm
-          std::vector<itk::Point<double, 3>> itkPlane;
-          this->Internal->GenerateItkData(markerPolyData, itkPlane, corners, dim, image);
-
-          cv::circle(image, corners[0], 2, cv::Scalar(0, 0, 255), -1);
-          cv::circle(image, corners[1], 2, cv::Scalar(255, 0, 0), -1);
-
-          // find plane normal and distance using RANSAC
-          std::vector<double> ransacParameterResult;
-          typedef itk::PlaneParametersEstimator<3> PlaneEstimatorType;
-          typedef itk::RANSAC<itk::Point<double, 3>, double> RANSACType;
-
-          //create and initialize the parameter estimator
-          double maximalDistanceFromPlane = 0.5;
-          PlaneEstimatorType::Pointer planeEstimator = PlaneEstimatorType::New();
-          planeEstimator->SetDelta(maximalDistanceFromPlane);
-          planeEstimator->LeastSquaresEstimate(itkPlane, ransacParameterResult);
-
-          //create and initialize the RANSAC algorithm
-          double desiredProbabilityForNoOutliers = 0.90;
-          RANSACType::Pointer ransacEstimator = RANSACType::New();
-
-          try
+          if (this->Internal->InputType == INPUT_RGB_AND_DEPTH)
           {
-            ransacEstimator->SetData(itkPlane);
-          }
-          catch (std::exception& e)
-          {
-            LOG_DEBUG(e.what());
-            return PLUS_SUCCESS;
-          }
+            // UPDATE DEPTH TRANSFORM
+            // get marker corners
+            std::vector<cv::Point2d> corners;
+            corners = markerIt->getCornersPx();
 
-          try
-          {
-            ransacEstimator->SetParametersEstimator(planeEstimator.GetPointer());
-          }
-          catch (std::exception& e)
-          {
-            LOG_DEBUG(e.what());
-            return PLUS_SUCCESS;
-          }
+            // copy data from inside the marker into data structure for RANSAC plane algorithm
+            std::vector<itk::Point<double, 3>> itkPlane;
+            this->Internal->GenerateItkData(markerPolyData, itkPlane, corners, dim, image);
 
-          //TODO: RANSAC causes massive pauses in tracking... how do we make it faster?
+            cv::circle(image, corners[0], 2, cv::Scalar(0, 0, 255), -1);
+            cv::circle(image, corners[1], 2, cv::Scalar(255, 0, 0), -1);
 
-          /*try
-          {
-            ransacEstimator->Compute(ransacParameterResult, desiredProbabilityForNoOutliers);
-          }
-          catch (std::exception& e)
-          {
-            LOG_DEBUG(e.what());
-            return PLUS_SUCCESS;
-          }*/
+            // find plane normal and distance using RANSAC
+            std::vector<double> ransacParameterResult;
+            typedef itk::PlaneParametersEstimator<3> PlaneEstimatorType;
+            typedef itk::RANSAC<itk::Point<double, 3>, double> RANSACType;
 
-          // print results of least squares / RANSAC plane fit
-          if (ransacParameterResult.empty())
-          {
-            LOG_WARNING("Unable to fit line through points with least squares estimation");
-            return PLUS_SUCCESS;
-          }
-          else
-          {
-            LOG_INFO("Least squares line parameters (n, a):");
-            for (unsigned int i = 0; i < (2 * 3); i++)
+            //create and initialize the parameter estimator
+            double maximalDistanceFromPlane = 0.5;
+            PlaneEstimatorType::Pointer planeEstimator = PlaneEstimatorType::New();
+            planeEstimator->SetDelta(maximalDistanceFromPlane);
+            planeEstimator->LeastSquaresEstimate(itkPlane, ransacParameterResult);
+
+            //create and initialize the RANSAC algorithm
+            double desiredProbabilityForNoOutliers = 0.90;
+            RANSACType::Pointer ransacEstimator = RANSACType::New();
+
+            try
             {
-              LOG_INFO(" RANSAC parameter: " << ransacParameterResult[i]);
+              ransacEstimator->SetData(itkPlane);
             }
+            catch (std::exception& e)
+            {
+              LOG_DEBUG(e.what());
+              return PLUS_SUCCESS;
+            }
+
+            try
+            {
+              ransacEstimator->SetParametersEstimator(planeEstimator.GetPointer());
+            }
+            catch (std::exception& e)
+            {
+              LOG_DEBUG(e.what());
+              return PLUS_SUCCESS;
+            }
+
+            //TODO: RANSAC causes massive pauses in tracking... how do we make it faster?
+
+            /*try
+            {
+              ransacEstimator->Compute(ransacParameterResult, desiredProbabilityForNoOutliers);
+            }
+            catch (std::exception& e)
+            {
+              LOG_DEBUG(e.what());
+              return PLUS_SUCCESS;
+            }*/
+
+            // print results of least squares / RANSAC plane fit
+            if (ransacParameterResult.empty())
+            {
+              LOG_WARNING("Unable to fit line through points with least squares estimation");
+              return PLUS_SUCCESS;
+            }
+            else
+            {
+              LOG_INFO("Least squares line parameters (n, a):");
+              for (unsigned int i = 0; i < (2 * 3); i++)
+              {
+                LOG_INFO(" RANSAC parameter: " << ransacParameterResult[i]);
+              }
+            }
+
+            double zAxis[4];
+            zAxis[0] = ransacParameterResult[0];
+            zAxis[1] = ransacParameterResult[1];
+            zAxis[2] = ransacParameterResult[2];
+            zAxis[3] = 0;
+
+            double xAxis[4];
+            xAxis[0] = Rmat.at<float>(0, 0);
+            xAxis[1] = Rmat.at<float>(1, 0);
+            xAxis[2] = Rmat.at<float>(2, 0);
+            xAxis[3] = 0;
+
+            // center is currently computed using the center of mass of the plane from least squares,
+            double center[4];
+            center[0] = ransacParameterResult[3];
+            center[1] = ransacParameterResult[4];
+            center[2] = ransacParameterResult[5];
+            center[3] = 0;
+
+            this->Internal->ComputePlaneTransform(toolIt->DepthMarkerToCamera, xAxis, zAxis, center);
           }
-
-          double zAxis[4];
-          zAxis[0] = ransacParameterResult[0];
-          zAxis[1] = ransacParameterResult[1];
-          zAxis[2] = ransacParameterResult[2];
-          zAxis[3] = 0;
-
-          double xAxis[4];
-          xAxis[0] = Rmat.at<float>(0, 0);
-          xAxis[1] = Rmat.at<float>(1, 0);
-          xAxis[2] = Rmat.at<float>(2, 0);
-          xAxis[3] = 0;
-
-          // center is currently computed using the center of mass of the plane from least squares,
-          double center[4];
-          center[0] = ransacParameterResult[3];
-          center[1] = ransacParameterResult[4];
-          center[2] = ransacParameterResult[5];
-          center[3] = 0;
-
-          this->Internal->ComputePlaneTransform(toolIt->DepthMarkerToCamera, xAxis, zAxis, center);
+          
           ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->OpticalMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
-          ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->DepthMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
+          //ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->DepthMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
         }
         else
         {
@@ -1074,10 +1114,11 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     if (!toolInFrame) {
       // tool not in frame
       ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->OpticalMarkerToCamera, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
-      ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->DepthMarkerToCamera, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
+      //ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->DepthMarkerToCamera, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
     }
   }
 
+  /*
   // for testing
   PixelCodec::ConvertToBmp24(PixelCodec::ComponentOrder_RGB, PixelCodec::PixelEncoding::PixelEncoding_BGR24, dim[0], dim[1], image.data, (unsigned char*)frame->GetScalarPointer());
   vtkPlusDataSource* videoSource;
@@ -1092,7 +1133,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
   videoSource->SetInputFrameSize(dim);
 
   videoSource->AddItem(frame, FrameNumber, unfilteredTimestamp);
-
+  */
   //TODO: add logging for frame rate
   this->Modified();
   this->FrameNumber++;

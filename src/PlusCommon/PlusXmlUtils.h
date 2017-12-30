@@ -401,6 +401,31 @@ public:
     } \
   }
 
+// Read a vector of numeric attributes and save it to a variable. If not found then no change.
+// If number of parameters in the attribute is not exactly the same as expected then return with error.
+#define XML_READ_STD_ARRAY_ATTRIBUTE_NONMEMBER_EXACT_OPTIONAL(varType, vectorSize, var, xmlElementVar)  \
+{ \
+  varType tmpValue[vectorSize+1] = {0}; /* try to read one more value to detect if more values are specified */ \
+  if ( xmlElementVar->GetAttribute(#var) ) \
+  { \
+    if ( xmlElementVar->GetVectorAttribute(#var, vectorSize+1, tmpValue) == vectorSize)  \
+    { \
+      for(int i = 0; i < vectorSize+1; ++i) \
+      { \
+        var[i] = tmpValue[i]; \
+      } \
+    } \
+    else \
+    { \
+      LOG_ERROR("Unable to parse " << #var << " attribute in " << (xmlElementVar->GetName() ? xmlElementVar->GetName() : "(undefined)") \
+      <<" element in device set configuration. Expected exactly " << vectorSize << " values separated by spaces, instead got this: "<< \
+      xmlElementVar->GetAttribute(#var));  \
+      return PLUS_FAIL; \
+    } \
+  } \
+}
+
+
 // Read a bool attribute (TRUE/FALSE) and save it to a class member variable. If not found do not change it.
 #define XML_READ_BOOL_ATTRIBUTE_OPTIONAL(memberVar, xmlElementVar)  \
   { \
@@ -564,6 +589,33 @@ public:
     } \
   }
 
+#define XML_READ_ENUM3_ATTRIBUTE_NONMEMBER_REQUIRED(varName, var, xmlElementVar, enumString1, enumValue1, enumString2, enumValue2, enumString3, enumValue3)  \
+  { \
+    const char* strValue = xmlElementVar->GetAttribute(#varName); \
+    if (strValue != NULL) \
+    { \
+      if (PlusCommon::IsEqualInsensitive(strValue, enumString1))  \
+      { \
+        var = enumValue1; \
+      } \
+      else if (PlusCommon::IsEqualInsensitive(strValue, enumString2))  \
+      { \
+        var = enumValue2;  \
+      } \
+      else if (PlusCommon::IsEqualInsensitive(strValue, enumString3))  \
+      { \
+        var = enumValue3;  \
+      } \
+      else  \
+      { \
+        LOG_ERROR("Failed to read enumerated value from " << #varName \
+          << " attribute of element " << (xmlElementVar->GetName() ? xmlElementVar->GetName() : "(undefined)") \
+          << ": expected '" << enumString1 << "', '" << enumString2 << "', or '" << enumString3 << "', got '" << strValue << "'"); \
+          return PLUS_FAIL; \
+      } \
+    } \
+  }
+
 #define XML_READ_ENUM4_ATTRIBUTE_OPTIONAL(memberVar, xmlElementVar, enumString1, enumValue1, enumString2, enumValue2, enumString3, enumValue3, enumString4, enumValue4)  \
   { \
     const char* strValue = xmlElementVar->GetAttribute(#memberVar); \
@@ -588,6 +640,36 @@ public:
       else  \
       { \
         LOG_WARNING("Failed to read enumerated value from " << #memberVar \
+          << " attribute of element " << (xmlElementVar->GetName() ? xmlElementVar->GetName() : "(undefined)") \
+          << ": expected '" << enumString1 << "', '" << enumString2 << "', '" << enumString3 << "', or '" << enumString4 << "', got '" << strValue << "'"); \
+      } \
+    } \
+  }
+
+#define XML_READ_ENUM4_ATTRIBUTE_NONMEMBER_OPTIONAL(varName, var, xmlElementVar, enumString1, enumValue1, enumString2, enumValue2, enumString3, enumValue3, enumString4, enumValue4)  \
+  { \
+    const char* strValue = xmlElementVar->GetAttribute(#varName); \
+    if (strValue != NULL) \
+    { \
+      if (PlusCommon::IsEqualInsensitive(strValue, enumString1))  \
+      { \
+        var = enumValue1; \
+      } \
+      else if (PlusCommon::IsEqualInsensitive(strValue, enumString2))  \
+      { \
+        var = enumValue2;  \
+      } \
+      else if (PlusCommon::IsEqualInsensitive(strValue, enumString3))  \
+      { \
+        var = enumValue3;  \
+      } \
+      else if (PlusCommon::IsEqualInsensitive(strValue, enumString4))  \
+      { \
+        var = enumValue4;  \
+      } \
+      else  \
+      { \
+        LOG_WARNING("Failed to read enumerated value from " << #varName \
           << " attribute of element " << (xmlElementVar->GetName() ? xmlElementVar->GetName() : "(undefined)") \
           << ": expected '" << enumString1 << "', '" << enumString2 << "', '" << enumString3 << "', or '" << enumString4 << "', got '" << strValue << "'"); \
       } \
