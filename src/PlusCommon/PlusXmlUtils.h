@@ -563,6 +563,34 @@ public:
     } \
   }
 
+#define XML_READ_ENUM2_ATTRIBUTE_NONMEMBER_REQUIRED(varName, var, xmlElementVar, enumString1, enumValue1, enumString2, enumValue2)  \
+  { \
+    const char* strValue = xmlElementVar->GetAttribute(#varName); \
+    if (strValue != NULL) \
+    { \
+      if (PlusCommon::IsEqualInsensitive(strValue, enumString1))  \
+      { \
+        var = enumValue1; \
+      } \
+      else if (PlusCommon::IsEqualInsensitive(strValue, enumString2))  \
+      { \
+        var = enumValue2;  \
+      } \
+      else  \
+      { \
+        LOG_ERROR("Failed to read enumerated value from " << #varName \
+          << " attribute of element " << (xmlElementVar->GetName() ? xmlElementVar->GetName() : "(undefined)") \
+          << ": expected '" << enumString1 << "' or '" << enumString2 << "', got '" << strValue << "'"); \
+        return PLUS_FAIL; \
+      } \
+    } \
+    else \
+    { \
+        LOG_ERROR("Unable to find required " << #varName << " attribute in " << (xmlElementVar->GetName() ? xmlElementVar->GetName() : "(undefined)") << " element in device set configuration"); \
+        return PLUS_FAIL; \
+    } \
+  }
+
 #define XML_READ_ENUM3_ATTRIBUTE_OPTIONAL(memberVar, xmlElementVar, enumString1, enumValue1, enumString2, enumValue2, enumString3, enumValue3)  \
   { \
     const char* strValue = xmlElementVar->GetAttribute(#memberVar); \
@@ -613,6 +641,11 @@ public:
           << ": expected '" << enumString1 << "', '" << enumString2 << "', or '" << enumString3 << "', got '" << strValue << "'"); \
           return PLUS_FAIL; \
       } \
+    } \
+    else \
+    { \
+        LOG_ERROR("Unable to find required " << #varName << " attribute in " << (xmlElementVar->GetName() ? xmlElementVar->GetName() : "(undefined)") << " element in device set configuration"); \
+        return PLUS_FAIL; \
     } \
   }
 

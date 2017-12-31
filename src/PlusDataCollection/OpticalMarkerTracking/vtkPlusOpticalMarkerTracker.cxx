@@ -33,6 +33,8 @@ See License.txt for details.
 
 // VNL includes
 #include <vnl_cross.h>
+#include <vnl_matrix.h>
+#include <vnl_vector.h>
 
 // aruco includes
 #include <markerdetector.h>
@@ -59,8 +61,7 @@ See License.txt for details.
 
 //TODO: Video and polydata indices should be set based on the input channels.
 // TODO: clean this up... shouldn't have global vars (move them into their respective methods)
-static const int CHANNEL_INDEX_VIDEO = 0;
-static const int CHANNEL_INDEX_POLYDATA = 1;
+
 static const int LEFT_BOUNDARY = false;
 static const int RIGHT_BOUNDARY = true;
 static const double PI = 3.14159265358979323846;
@@ -84,7 +85,7 @@ namespace
     {
       FUSION_RGB_ONLY,
       FUSION_DEPTH_ONLY,
-      FUSION_COMPONENTS,
+      FUSION_COMPONENT,
       FUSION_KALMAN
     };
 
@@ -113,8 +114,10 @@ namespace
     std::string ToolSourceId;
     std::string ToolName;
     aruco::MarkerPoseTracker MarkerPoseTracker;
-    vtkSmartPointer<vtkMatrix4x4> OpticalMarkerToCamera = vtkSmartPointer<vtkMatrix4x4>::New();
+    vtkSmartPointer<vtkMatrix4x4> RgbMarkerToCamera = vtkSmartPointer<vtkMatrix4x4>::New();
     vtkSmartPointer<vtkMatrix4x4> DepthMarkerToCamera = vtkSmartPointer<vtkMatrix4x4>::New();
+    // previous result transform computed using DataFusionMethod, unused for FUSION_RGB_ONLY and FUSION_DEPTH_ONLY
+    vtkSmartPointer<vtkMatrix4x4> PreviousMarkerToCamera = vtkSmartPointer<vtkMatrix4x4>::New();
   };
 }
 
@@ -160,27 +163,27 @@ public:
   float VectorAngleDeg(vnl_vector<double> xAxis, vnl_vector<double> zAxis);
 
   /*
-  * Computes the slope of the line x=my+b between corners 1 & 2.
-  * If corenrs have the same x or y values then returns special value 0.0.
-  */
+   * Computes the slope of the line x=my+b between corners 1 & 2.
+   * If corenrs have the same x or y values then returns special value 0.0.
+   */
   float DetermineSlope(cv::Point2d corner1, cv::Point2d corner2);
 
   /*
-  * Determines if the marker is ALIGNED, SKEW_LEFT, SKEW_RIGHT or ROTATED
-  * with respect to the image frame.  Re-orders corners so position 0 is top corner.
-  */
+   * Determines if the marker is ALIGNED, SKEW_LEFT, SKEW_RIGHT or ROTATED
+   * with respect to the image frame.  Re-orders corners so position 0 is top corner.
+   */
   MARKER_ORIENTATION DetermineMarkerOrientation(std::vector<cv::Point2d>& corners);
 
   //TODO: rename all the Generate methods to Extract
 
   /*
-  * Computes a boundary of the marker whose path is defined by corners.
-  */
+   * Computes a boundary of the marker whose path is defined by corners.
+   */
   void GenerateBoundary(int* boundary, std::vector<cv::Point2d> corners, int top, bool isRight);
 
   /*
-  *
-  */
+   *
+   */
   void GenerateRotatedItkData(
     vtkSmartPointer<vtkPolyData> vtkDepthData,
     std::vector<itk::Point<double, 3>> &itkData,
@@ -191,8 +194,8 @@ public:
   );
 
   /*
-  *
-  */
+   *
+   */
   void GenerateSkewLeftItkData(
     vtkSmartPointer<vtkPolyData> vtkDepthData,
     std::vector<itk::Point<double, 3>> &itkData,
@@ -203,8 +206,8 @@ public:
   );
 
   /*
-  *
-  */
+   *
+   */
   void GenerateSkewRightItkData(
     vtkSmartPointer<vtkPolyData> vtkDepthData,
     std::vector<itk::Point<double, 3>> &itkData,
@@ -215,8 +218,8 @@ public:
   );
 
   /*
-  * Copy marker plane from vtkPolyData into itk datastructure for RANSAC input.
-  */
+   * Copy marker plane from vtkPolyData into itk datastructure for RANSAC input.
+   */
   void CopyToItkData(
     vtkSmartPointer<vtkPolyData> vtkDepthData,
     std::vector<itk::Point<double, 3>> &itkData,
@@ -226,8 +229,8 @@ public:
     int *rightBoundary);
 
   /*
-  *
-  */
+   *
+   */
   void GenerateItkData(
     vtkSmartPointer<vtkPolyData> vtkDepthData,
     std::vector<itk::Point<double, 3>> &itkData,
@@ -235,6 +238,24 @@ public:
     /*for testing*/
     FrameSizeType dim,
     cv::Mat image
+  );
+
+  /*
+   *
+   */
+  void ComputeComponentFusion(
+    vtkSmartPointer<vtkMatrix4x4> RgbMarkerToCamera,
+    vtkSmartPointer<vtkMatrix4x4> DepthMarkerToCamera,
+    vtkSmartPointer<vtkMatrix4x4> PreviousMarkerToCamera
+  );
+
+  /*
+  *
+  */
+  void ComputeKalmanFusion(
+    vtkSmartPointer<vtkMatrix4x4> RgbMarkerToCamera,
+    vtkSmartPointer<vtkMatrix4x4> DepthMarkerToCamera,
+    vtkSmartPointer<vtkMatrix4x4> PreviousMarkerToCamera
   );
 
   // TODO: offload all depth plane fitting from InternalUpdate to DepthPlaneFit
@@ -281,7 +302,9 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
   XML_FIND_DEVICE_ELEMENT_REQUIRED_FOR_READING(deviceConfig, rootConfigElement);
 
   XML_READ_STRING_ATTRIBUTE_NONMEMBER_REQUIRED(CameraCalibrationFile, this->Internal->CameraCalibrationFile, deviceConfig);
-  XML_READ_ENUM2_ATTRIBUTE_NONMEMBER_OPTIONAL(InputType, this->Internal->InputType, deviceConfig, "RGB_ONLY", INPUT_RGB_ONLY, "RGB_AND_DEPTH", INPUT_RGB_AND_DEPTH);
+  XML_READ_ENUM2_ATTRIBUTE_NONMEMBER_REQUIRED(InputType, this->Internal->InputType, deviceConfig, "RGB_ONLY", INPUT_RGB_ONLY, "RGB_AND_DEPTH", INPUT_RGB_AND_DEPTH);
+  // TODO: Check correct number of input bulk data channels (video / vtkPolydata)
+
   XML_READ_STRING_ATTRIBUTE_NONMEMBER_REQUIRED(MarkerDictionary, this->Internal->MarkerDictionary, deviceConfig);
 
   XML_FIND_NESTED_ELEMENT_REQUIRED(dataSourcesElement, deviceConfig, "DataSources");
@@ -311,7 +334,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
     std::string toolSourceId = toolTransformName.GetTransformName();
 
     TrackedTool::DATA_FUSION_METHOD fusionMethod = TrackedTool::FUSION_RGB_ONLY;
-    XML_READ_ENUM4_ATTRIBUTE_NONMEMBER_OPTIONAL(DataFusionMethod, fusionMethod, toolDataElement, "RGB_ONLY", TrackedTool::FUSION_RGB_ONLY, "DEPTH_ONLY", TrackedTool::FUSION_DEPTH_ONLY, "COMPONENTS", TrackedTool::FUSION_COMPONENTS, "KALMAN", TrackedTool::FUSION_KALMAN);
+    XML_READ_ENUM4_ATTRIBUTE_NONMEMBER_OPTIONAL(DataFusionMethod, fusionMethod, toolDataElement, "RGB_ONLY", TrackedTool::FUSION_RGB_ONLY, "DEPTH_ONLY", TrackedTool::FUSION_DEPTH_ONLY, "COMPONENT", TrackedTool::FUSION_COMPONENT, "KALMAN", TrackedTool::FUSION_KALMAN);
 
     if (this->Internal->InputType == INPUT_RGB_ONLY)
     {
@@ -320,7 +343,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::ReadConfiguration(vtkXMLDataElement* roo
         LOG_ERROR("Tracked tool '" << toolId << "' is requesting 'DEPTH_ONLY' data fusion but depth data is not provided to OpticalMarkerTracker. Please provide depth data and set InputType='RGB_AND_DEPTH' or use DataFusionMethod='RGB_ONLY'.");
         return PLUS_FAIL;
       }
-      else if (fusionMethod == TrackedTool::FUSION_COMPONENTS)
+      else if (fusionMethod == TrackedTool::FUSION_COMPONENT)
       {
         LOG_ERROR("Tracked tool '" << toolId << "' is requesting 'COMPONENTS' data fusion but depth data is not provided to OpticalMarkerTracker. Please provide depth data and set InputType='RGB_AND_DEPTH' or use DataFusionMethod='RGB_ONLY'.");
         return PLUS_FAIL;
@@ -496,7 +519,7 @@ void vtkPlusOpticalMarkerTracker::vtkInternal::ComputePlaneTransform(
   double z_expected[4] = { 0, 0, -1, 0 };
   z_axis[1] = -z_axis[1]; // left-handed to right-handed coord sys conversion
   float ZtoZAngle = vtkMath::Dot(z_expected, z_axis);
-  LOG_INFO("ZtoZangle: " << ZtoZAngle);
+  LOG_INFO("cos(ZtoZangle): " << ZtoZAngle);
   if (ZtoZAngle < 0)
   {
     // normal is pointing towards back of marker, flip it, as below
@@ -859,8 +882,51 @@ void vtkPlusOpticalMarkerTracker::vtkInternal::GenerateItkData(
 }
 
 //----------------------------------------------------------------------------
+void vtkPlusOpticalMarkerTracker::vtkInternal::ComputeComponentFusion(
+  vtkSmartPointer<vtkMatrix4x4> RgbMarkerToCamera,
+  vtkSmartPointer<vtkMatrix4x4> DepthMarkerToCamera,
+  vtkSmartPointer<vtkMatrix4x4> PreviousMarkerToCamera
+)
+{
+  PreviousMarkerToCamera->Identity();
+  // using rotation from RGB
+  for (int row = 0; row < 3; row++)
+  {
+    for (int col = 0; col < 3; col++)
+    {
+      PreviousMarkerToCamera->SetElement(row, col, RgbMarkerToCamera->GetElement(row, col));
+    }
+  }
+  // using rotation from Depth
+  //for (int row = 0; row < 3; row++)
+  //{
+  //  for (int col = 0; col < 3; col++)
+  //  {
+  //    PreviousMarkerToCamera->SetElement(row, col, RgbMarkerToCamera->GetElement(row, col));
+  //  }
+  //}
+  // x, y positions from Optical
+  PreviousMarkerToCamera->SetElement(0, 3, RgbMarkerToCamera->GetElement(0, 3));
+  PreviousMarkerToCamera->SetElement(1, 3, RgbMarkerToCamera->GetElement(1, 3));
+  // z position from depth
+  PreviousMarkerToCamera->SetElement(2, 3, DepthMarkerToCamera->GetElement(2, 3));
+}
+
+//----------------------------------------------------------------------------
+void vtkPlusOpticalMarkerTracker::vtkInternal::ComputeKalmanFusion(
+  vtkSmartPointer<vtkMatrix4x4> RgbMarkerToCamera,
+  vtkSmartPointer<vtkMatrix4x4> DepthMarkerToCamera,
+  vtkSmartPointer<vtkMatrix4x4> PreviousMarkerToCamera
+)
+{
+
+}
+
+//----------------------------------------------------------------------------
 PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
 {
+  static const int CHANNEL_INDEX_VIDEO = 0;
+  static const int CHANNEL_INDEX_POLYDATA = 1;
 
   if (this->Internal->InputType == INPUT_RGB_ONLY)
   {
@@ -874,7 +940,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
   {
     if (this->InputChannels.size() != 2)
     {
-      LOG_ERROR("OpticalMarkerTracker device requires exactly 2 input streams (that contains video data and depth data). Check configuration.");
+      LOG_ERROR("OpticalMarkerTracker device requires exactly 2 input streams (that contain video data and depth data). Check configuration.");
       return PLUS_FAIL;
     }
   }
@@ -928,7 +994,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     }
   }
 
-  //TODO: to visualize polydata for testing purposes...
+  // to visualize polydata for testing purposes...
   if (false) {
     vtkSmartPointer<vtkPolyDataMapper> mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
     mapper->SetInputData(trackedPolyDataFrame.GetPolyData());
@@ -954,7 +1020,7 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     renderWindowInteractor->Start();
   }
 
-  // get dimensions & data
+  // get frame dimensions & raw data
   FrameSizeType dim = trackedVideoFrame.GetFrameSize();
   PlusVideoFrame* frame = trackedVideoFrame.GetImageData();
 
@@ -971,21 +1037,14 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
 
   vtkSmartPointer<vtkPolyData> markerPolyData = trackedPolyDataFrame.GetPolyData();
 
-
-
   // detect markers in frame
   this->Internal->MarkerDetector->detect(image, this->Internal->Markers);
   const double unfilteredTimestamp = vtkPlusAccurateTimer::GetSystemTime();
-  // iterate through tools updating tracking
+
+  // iterate through tools computing RGB and Depth transforms for each tool
+  // update each tool with the transform computed using the requested fusion method
   for (vector<TrackedTool>::iterator toolIt = begin(this->Internal->Tools); toolIt != end(this->Internal->Tools); ++toolIt)
   {
-    // for SPIE 2017 to output both depth and optical transforms simultaneously
-    // ignores depth named transforms
-    //if (toolIt->ToolSourceId.find("Depth") != string::npos)
-    //{
-    //  continue;
-    //}
-
     bool toolInFrame = false;
     for (vector<aruco::Marker>::iterator markerIt = begin(this->Internal->Markers); markerIt != end(this->Internal->Markers); ++markerIt)
     {
@@ -993,14 +1052,17 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
         //marker is in frame
         toolInFrame = true;
 
+        // todo: make min error ratio a settable parameter in config
         if (toolIt->MarkerPoseTracker.estimatePose(*markerIt, *this->Internal->CameraParameters, toolIt->MarkerSizeMm / MM_PER_M, 4))
         {
           // UPDATE OPTICAL TRANSFORM
           cv::Mat Rvec = toolIt->MarkerPoseTracker.getRvec();
           cv::Mat Tvec = toolIt->MarkerPoseTracker.getTvec();
           cv::Mat Rmat(3, 3, CV_32FC1);
-          this->Internal->BuildOpticalTransformMatrix(toolIt->OpticalMarkerToCamera, Rvec, Tvec, Rmat);
+          this->Internal->BuildOpticalTransformMatrix(toolIt->RgbMarkerToCamera, Rvec, Tvec, Rmat);
 
+          // todo: cache the results of optical transformation computation and depth computation calculation for each marker
+          // todo: lazy evaluation, only evaluate depth if user requests FUSION_COMPONENT or FUSION_KALMAN
           if (this->Internal->InputType == INPUT_RGB_AND_DEPTH)
           {
             // UPDATE DEPTH TRANSFORM
@@ -1011,9 +1073,6 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
             // copy data from inside the marker into data structure for RANSAC plane algorithm
             std::vector<itk::Point<double, 3>> itkPlane;
             this->Internal->GenerateItkData(markerPolyData, itkPlane, corners, dim, image);
-
-            cv::circle(image, corners[0], 2, cv::Scalar(0, 0, 255), -1);
-            cv::circle(image, corners[1], 2, cv::Scalar(255, 0, 0), -1);
 
             // find plane normal and distance using RANSAC
             std::vector<double> ransacParameterResult;
@@ -1050,7 +1109,8 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
               return PLUS_SUCCESS;
             }
 
-            //TODO: RANSAC causes massive pauses in tracking... how do we make it faster?
+            // todo: RANSAC causes massive pauses in tracking... how do we make it faster?
+            // using least squares for now
 
             /*try
             {
@@ -1066,16 +1126,16 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
             if (ransacParameterResult.empty())
             {
               LOG_WARNING("Unable to fit line through points with least squares estimation");
-              return PLUS_SUCCESS;
+              continue;
             }
-            else
+            /*else
             {
               LOG_INFO("Least squares line parameters (n, a):");
               for (unsigned int i = 0; i < (2 * 3); i++)
               {
                 LOG_INFO(" RANSAC parameter: " << ransacParameterResult[i]);
               }
-            }
+            }*/
 
             double zAxis[4];
             zAxis[0] = ransacParameterResult[0];
@@ -1099,8 +1159,30 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
             this->Internal->ComputePlaneTransform(toolIt->DepthMarkerToCamera, xAxis, zAxis, center);
           }
           
-          ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->OpticalMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
-          //ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->DepthMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
+          if (toolIt->DataFusionMethod == TrackedTool::FUSION_RGB_ONLY)
+          {
+            // update tool transform with RGB only
+            ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->RgbMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
+            LOG_INFO("FUSION_RGB");
+          }
+          else if (toolIt->DataFusionMethod == TrackedTool::FUSION_DEPTH_ONLY)
+          {
+            // udpate tool transform with Depth only
+            ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->DepthMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
+            LOG_INFO("FUSION_DEPTH");
+          }
+          else if (toolIt->DataFusionMethod == TrackedTool::FUSION_COMPONENT)
+          {
+            // compute component fusion and update tool transform
+            this->Internal->ComputeComponentFusion(toolIt->RgbMarkerToCamera, toolIt->DepthMarkerToCamera, toolIt->PreviousMarkerToCamera);
+            ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->PreviousMarkerToCamera, TOOL_OK, this->FrameNumber, unfilteredTimestamp);
+            LOG_INFO("FUSION_COMPONENT");
+          }
+          else if (toolIt->DataFusionMethod == TrackedTool::FUSION_KALMAN)
+          {
+            // compute Kalman filter fusion and update tool transform
+            LOG_INFO("FUSION_KALMAN");
+          }
         }
         else
         {
@@ -1113,30 +1195,13 @@ PlusStatus vtkPlusOpticalMarkerTracker::InternalUpdate()
     }
     if (!toolInFrame) {
       // tool not in frame
-      ToolTimeStampedUpdate(toolIt->ToolSourceId, toolIt->OpticalMarkerToCamera, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
-      //ToolTimeStampedUpdate("Depth" + toolIt->ToolSourceId, toolIt->DepthMarkerToCamera, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
+      vtkSmartPointer<vtkMatrix4x4> identity = vtkSmartPointer<vtkMatrix4x4>::New();
+      identity->Identity();
+      ToolTimeStampedUpdate(toolIt->ToolSourceId, identity, TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
     }
   }
 
-  /*
-  // for testing
-  PixelCodec::ConvertToBmp24(PixelCodec::ComponentOrder_RGB, PixelCodec::PixelEncoding::PixelEncoding_BGR24, dim[0], dim[1], image.data, (unsigned char*)frame->GetScalarPointer());
-  vtkPlusDataSource* videoSource;
-  if (GetVideoSource("Optical", videoSource) != PLUS_SUCCESS)
-  {
-    LOG_ERROR("OMT video source failed");
-  }
-
-  videoSource->SetPixelType(VTK_UNSIGNED_CHAR);
-  videoSource->SetImageType(US_IMG_RGB_COLOR);
-  videoSource->SetNumberOfScalarComponents(3);
-  videoSource->SetInputFrameSize(dim);
-
-  videoSource->AddItem(frame, FrameNumber, unfilteredTimestamp);
-  */
-  //TODO: add logging for frame rate
   this->Modified();
   this->FrameNumber++;
-
   return PLUS_SUCCESS;
 }
