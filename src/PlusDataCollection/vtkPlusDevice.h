@@ -381,6 +381,7 @@ public:
   PlusStatus AddOutputChannel(vtkPlusChannel* aChannel);
 
   /*! Access the available output channels */
+  PlusStatus GetFirstOutputChannel(vtkPlusChannel*& aChannel);
   PlusStatus GetOutputChannelByName(vtkPlusChannel*& aChannel, const char* aChannelId);
   PlusStatus GetOutputChannelByName(vtkPlusChannel*& aChannel, const std::string& aChannelId);
 
