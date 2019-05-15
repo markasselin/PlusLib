@@ -88,17 +88,21 @@ public:
   public:
     Marker();
     /*! toolToTracker is deep copied */
-    Marker(int geometryId, vtkMatrix4x4* toolToTracker, int gpm, float freMm);
+    Marker(int geometryId, vtkMatrix4x4* toolToTracker, int gpm, float freMm, bool markerInAccurateVolume);
     Marker(const Marker&);
     int GetGeometryID();
     int GetGeometryPresenceMask();
     vtkMatrix4x4* GetTransformToTracker();
     float GetFiducialRegistrationErrorMm();
+    bool IsMarkerInAccurateVolume();
   private:
     int GeometryId;
     vtkNew<vtkMatrix4x4> ToolToTracker;
     int GeometryPresenceMask; // presence mask of fiducials expressed as their numerical indices
     float RegistrationErrorMM; // Mean fiducial registration error (unit mm) 
+    bool MarkerInAccurateVolume; // status of the marker tracking
+    bool Button1Pressed;
+    bool Button2Pressed;
   };
 
   /*! Connect to Atracsys tracker, must be called before any other function in this wrapper API. */
@@ -179,7 +183,7 @@ public:
   {
     OPTION_DATA_SENDING = 20,
     OPTION_FTK_WIRELESS_MARKER_PAIRING_ENABLE = 40,
-    OPTION_FTK_WIRELESS_MARKER_STATUS_STREAMING = 45,
+    OPTION_FTK_WIRELESS_MARKER_BUTTON_STREAMING = 45,
     OPTION_FTK_WIRELESS_MARKER_BATTERY_STREAMING = 46,
     OPTION_FTK_DEV_MARKERS_INFO = 47,
     OPTION_IR_STROBE = 50,
@@ -200,7 +204,7 @@ public:
     OPTION_ONBOARD_PROCESSING = 6000,
     OPTION_IMAGE_STREAMING = 6003,
     OPTION_STK_WIRELESS_MARKER_PAIRING_ENABLE = 7000,
-    OPTION_STK_WIRELESS_MARKER_STATUS_STREAMING = 7001,
+    OPTION_STK_WIRELESS_MARKER_BUTTON_STREAMING = 7001,
     OPTION_STK_WIRELESS_MARKER_BATTERY_STREAMING = 7002,
     OPTION_STK_DEV_MARKERS_INFO = 7005,
   };

@@ -67,6 +67,7 @@ public:
   int MaxMissingFiducials = 0;
   float MaxMeanRegistrationErrorMm = 2.0;
   int ActiveMarkerPairingTimeSec = 0;
+  bool WirelessMarkerButtonsEnabled = false;
 
   // matches plus tool id to .ini geometry file names/paths
   std::map<std::string, std::string> PlusIdMappedToGeometryFilename;
@@ -134,6 +135,8 @@ PlusStatus vtkPlusAtracsysTracker::ReadConfiguration(vtkXMLDataElement* rootConf
   {
     LOG_WARNING("Marker pairing time is set to " << this->Internal->ActiveMarkerPairingTimeSec << "seconds, tracking will not start until this period is over.");
   }
+
+  XML_READ_BOOL_ATTRIBUTE_NONMEMBER_OPTIONAL(EnableWirelessMarkerButtons, this->Internal->WirelessMarkerButtonsEnabled, deviceConfig);
 
   enum TRACKING_TYPE
   {
@@ -245,14 +248,16 @@ PlusStatus vtkPlusAtracsysTracker::InternalConnect()
   // disable marker status streaming and battery charge streaming, they cause momentary pauses in tracking while sending
   if (this->Internal->DeviceType == AtracsysTracker::DEVICE_TYPE::SPRYTRACK_180)
   {
-    if ((result = this->Internal->Tracker.EnableWirelessMarkerStatusStreaming(false)) != ATR_SUCCESS)
-    {
-      LOG_WARNING(this->Internal->Tracker.ResultToString(result));
-    }
     if ((result = this->Internal->Tracker.EnableWirelessMarkerBatteryStreaming(false)) != ATR_SUCCESS)
     {
       LOG_WARNING(this->Internal->Tracker.ResultToString(result));
     }
+  }
+
+  // enable button status streaming
+  if ((result = this->Internal->Tracker.EnableWirelessMarkerStatusStreaming(this->Internal->WirelessMarkerButtonsEnabled)) != ATR_SUCCESS)
+  {
+    LOG_WARNING(this->Internal->Tracker.ResultToString(result));
   }
 
   // load passive geometries onto Atracsys
@@ -363,16 +368,21 @@ PlusStatus vtkPlusAtracsysTracker::InternalUpdate()
   std::map<int, std::string>::iterator it;
   for (it = this->Internal->FtkGeometryIdMappedToToolId.begin(); it != this->Internal->FtkGeometryIdMappedToToolId.end(); it++)
   {
+    bool toolUpdated = false;
+
     if (std::find(this->DisabledToolIds.begin(), this->DisabledToolIds.end(), it->second) != this->DisabledToolIds.end())
     {
       // tracking of this tool has been disabled
+	    toolUpdated = true;
       vtkNew<vtkMatrix4x4> emptyTransform;
       igsioTransformName toolTransformName(it->second, this->GetToolReferenceFrameName());
       std::string toolSourceId = toolTransformName.GetTransformName();
-      ToolTimeStampedUpdate(toolSourceId, emptyTransform.GetPointer(), TOOL_OUT_OF_VIEW, this->FrameNumber, unfilteredTimestamp);
+      ToolTimeStampedUpdate(toolSourceId, emptyTransform.GetPointer(), TOOL_DISABLED, this->FrameNumber, unfilteredTimestamp);
       continue;
     }
-    bool toolUpdated = false;
+
+    igsioFieldMapType customFields; // container for marker tracking quality info
+    ToolStatus toolStatus = TOOL_OK;
 
     std::vector<AtracsysTracker::Marker>::iterator mit;
     for (mit = markers.begin(); mit != markers.end(); mit++)
@@ -381,18 +391,31 @@ PlusStatus vtkPlusAtracsysTracker::InternalUpdate()
       {
         continue;
       }
+
       // check if tool marker registration falls above maximum
-      if (mit->GetFiducialRegistrationErrorMm() > this->Internal->MaxMeanRegistrationErrorMm)
+	    float fidRegistrationError = mit->GetFiducialRegistrationErrorMm();
+      if (fidRegistrationError > this->Internal->MaxMeanRegistrationErrorMm)
       {
         LOG_WARNING("Maximum mean marker fiducial registration error exceeded for tool: " << it->second);
-        continue;
+		    toolStatus = TOOL_HIGH_ERROR;
       }
+
+	    // check if tool is in working volume
+	    // note: this is listed as not-implemented in the Atracsys docs
+	    if (!mit->IsMarkerInAccurateVolume())
+	    {
+		    // tool is out of high-accuracy region of measurement volume
+		    LOG_WARNING("Tool out of high-accuracy region with name: " << it->second);
+		    toolStatus = TOOL_OUT_OF_VOLUME;
+	    }
+	  
+	    // update tool status if either button is pressed
 
       // tool is seen with acceptable registration error
       toolUpdated = true;
       igsioTransformName toolTransformName(it->second, this->GetToolReferenceFrameName());
       std::string toolSourceId = toolTransformName.GetTransformName();
-      ToolTimeStampedUpdate(toolSourceId, mit->GetTransformToTracker(), TOOL_OK, this->FrameNumber, unfilteredTimestamp);
+      ToolTimeStampedUpdate(toolSourceId, mit->GetTransformToTracker(), toolStatus, this->FrameNumber, unfilteredTimestamp);
     }
 
     if (!toolUpdated)

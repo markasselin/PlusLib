@@ -86,6 +86,13 @@ public:
   // helper function to load ftkGeometry from string
   ATRACSYS_RESULT LoadFtkGeometryFromString(const std::string& geomString, ftkGeometry& geom);
 
+  // marker status struct
+  struct ActiveMarkerBatteryAndButtonStatus
+  {
+    uint8 BatteryState;
+    uint8 ButtonStatus;
+  };
+
   // Code from ATRACSYS
   class IniFile
   {
@@ -749,9 +756,40 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkersInFrame(std::vector<
     return ERROR_TOO_MANY_MARKERS;
   }
 
+  // generate list of button presses
+  std::map<int, AtracsysInternal::ActiveMarkerBatteryAndButtonStatus> markersState;
+  for (unsigned int i = 0; i < this->Internal->Frame->eventsCount; i++)
+  {
+    ftkEvent* frameEvent = *(this->Internal->Frame->events + i);
+    // Did someone press a button ?
+    if (frameEvent && frameEvent->Type == FtkEventType::fetActiveMarkersButtonStatusV1)
+    {
+      const unsigned int n = (frameEvent->Payload / sizeof(EvtActiveMarkersButtonStatusesV1Payload));
+      for (unsigned int j = 0; j < n; j++)
+      {
+        EvtActiveMarkersButtonStatusesV1Payload buttonStatuses;
+        memcpy(&buttonStatuses,
+          frameEvent->Data +
+          (j * sizeof(EvtActiveMarkersButtonStatusesV1Payload)),
+          sizeof(EvtActiveMarkersButtonStatusesV1Payload));
+        if (markersState.find(buttonStatuses.DeviceID) == markersState.end())
+        {
+          // First time, insert in the map.
+          markersState[buttonStatuses.DeviceID] = AtracsysInternal::ActiveMarkerBatteryAndButtonStatus();
+        }
+        if (markersState[buttonStatuses.DeviceID].ButtonStatus != buttonStatuses.ButtonStatus)
+        {
+          cout << "Marker " << static_cast<int>(buttonStatuses.DeviceID) << " new button status: " << static_cast<int>(buttonStatuses.ButtonStatus) << endl;
+          markersState[buttonStatuses.DeviceID].ButtonStatus = buttonStatuses.ButtonStatus;
+        }
+      }
+    }
+  }
+
   // make sure markers vector is empty before populating
   markers.clear();
 
+  // populate markers vector
   for (size_t m = 0; m < this->Internal->Frame->markersCount; m++)
   {
     ftkMarker& marker = this->Internal->Frame->markers[m];
@@ -766,9 +804,16 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::GetMarkersInFrame(std::vector<
       }
     }
 
-    Marker atracsysMarker((int)marker.geometryId, toolToTracker.GetPointer(), marker.geometryPresenceMask, marker.registrationErrorMM);
+    bool markerInAccurateVolume = true;
+    if (marker.status.ThreeDcrop == 1)
+    {
+      markerInAccurateVolume = false;
+    }
+    
+    Marker atracsysMarker((int)marker.geometryId, toolToTracker.GetPointer(), marker.geometryPresenceMask, marker.registrationErrorMM, markerInAccurateVolume);
     markers.push_back(atracsysMarker);
   }
+
   return SUCCESS;
 }
 
@@ -870,11 +915,11 @@ AtracsysTracker::ATRACSYS_RESULT AtracsysTracker::EnableWirelessMarkerStatusStre
   OPTIONS optionNum;
   if (this->DeviceType == FUSIONTRACK_250 || this->DeviceType == FUSIONTRACK_500)
   {
-    optionNum = OPTION_FTK_WIRELESS_MARKER_STATUS_STREAMING;
+    optionNum = OPTION_FTK_WIRELESS_MARKER_BUTTON_STREAMING;
   }
   else
   {
-    optionNum = OPTION_STK_WIRELESS_MARKER_STATUS_STREAMING;
+    optionNum = OPTION_STK_WIRELESS_MARKER_BUTTON_STREAMING;
   }
 
   if (ftkSetInt32(this->Internal->FtkLib, this->Internal->TrackerSN, optionNum, enabled) != ftkError::FTK_OK)
@@ -1020,12 +1065,15 @@ AtracsysTracker::Marker::Marker()
   this->GeometryPresenceMask = -1;
   this->RegistrationErrorMM = 0.0;
 }
-AtracsysTracker::Marker::Marker(int geometryId, vtkMatrix4x4* toolToTracker, int geometryPresenceMask, float registrationErrorMM)
+AtracsysTracker::Marker::Marker(int geometryId, vtkMatrix4x4* toolToTracker, int geometryPresenceMask, float registrationErrorMM, bool markerInAccurateVolume)
 {
   this->GeometryId = geometryId;
   this->ToolToTracker->DeepCopy(toolToTracker);
   this->GeometryPresenceMask = geometryPresenceMask;
   this->RegistrationErrorMM = registrationErrorMM;
+  this->MarkerInAccurateVolume = markerInAccurateVolume;
+  this->Button1Pressed = false;
+  this->Button2Pressed = false;
 }
 
 AtracsysTracker::Marker::Marker(const AtracsysTracker::Marker& obj)
@@ -1034,6 +1082,9 @@ AtracsysTracker::Marker::Marker(const AtracsysTracker::Marker& obj)
   this->ToolToTracker->DeepCopy(obj.ToolToTracker.GetPointer());
   this->GeometryPresenceMask = obj.GeometryPresenceMask;
   this->RegistrationErrorMM = obj.RegistrationErrorMM;
+  this->MarkerInAccurateVolume = obj.MarkerInAccurateVolume;
+  this->Button1Pressed = obj.Button1Pressed;
+  this->Button2Pressed = obj.Button2Pressed;
 }
 
 int AtracsysTracker::Marker::GetGeometryID()
@@ -1054,4 +1105,9 @@ vtkMatrix4x4* AtracsysTracker::Marker::GetTransformToTracker()
 float AtracsysTracker::Marker::GetFiducialRegistrationErrorMm()
 {
   return this->RegistrationErrorMM;
+}
+
+bool AtracsysTracker::Marker::IsMarkerInAccurateVolume()
+{
+	return this->MarkerInAccurateVolume;
 }
