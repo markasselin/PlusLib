@@ -20,6 +20,8 @@ See License.txt for details.
 #include "vtkPlusVirtualVolumeReconstructor.h"
 #include "vtkPlusImageProcessorVideoSource.h"
 #include "vtkPlusGenericSerialDevice.h"
+#include "StageControl/vtkPlusMonopriceStage.h"
+#include "StageControl/vtkPlusVelmexStage.h"
 #ifdef PLUS_USE_TextRecognizer
   #include "vtkPlusVirtualTextRecognizer.h"
 #endif
@@ -273,6 +275,9 @@ vtkPlusDeviceFactory::vtkPlusDeviceFactory()
   RegisterDevice("ImageProcessor", "vtkPlusImageProcessorVideoSource", (PointerToDevice)&vtkPlusImageProcessorVideoSource::New);
   RegisterDevice("GenericSerialDevice", "vtkPlusGenericSerialDevice", (PointerToDevice)&vtkPlusGenericSerialDevice::New);
   RegisterDevice("NoiseVideo", "vtkPlusDevice", (PointerToDevice)&vtkPlusDevice::New);
+  RegisterDevice("MonopriceStage", "vtkPlusMonopriceStage", (PointerToDevice)& vtkPlusMonopriceStage::New);
+  RegisterDevice("VelmexStage", "vtkPlusVelmexStage", (PointerToDevice)& vtkPlusVelmexStage::New);
+
 #ifdef PLUS_USE_OpenIGTLink
   RegisterDevice("OpenIGTLinkVideo", "vtkPlusOpenIGTLinkVideoSource", (PointerToDevice)&vtkPlusOpenIGTLinkVideoSource::New);
 #endif

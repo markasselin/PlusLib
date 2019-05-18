@@ -111,6 +111,9 @@ SET(Common_SRCS
   vtkPlusTimestampedCircularBuffer.cxx
   PlusStreamBufferItem.cxx
   vtkPlusGenericSerialDevice.cxx
+  StageControl/vtkPlusStageDevice.cxx
+  StageControl/vtkPlusMonopriceStage.cxx
+  StageControl/vtkPlusVelmexStage.cxx
   PlusSerialLine.cxx
   vtkFcsvReader.cxx
   vtkFcsvWriter.cxx
@@ -157,6 +160,9 @@ IF(MSVC OR ${CMAKE_GENERATOR} MATCHES "Xcode")
     vtkPlusTimestampedCircularBuffer.h
     PlusStreamBufferItem.h
     vtkPlusGenericSerialDevice.h
+    StageControl/vtkPlusStageDevice.h
+    StageControl/vtkPlusMonopriceStage.h
+    StageControl/vtkPlusVelmexStage.h
     PlusSerialLine.h
     vtkFcsvReader.h
     vtkFcsvWriter.h
