@@ -7,8 +7,8 @@ See License.txt for details.
 #include "PlusConfigure.h"
 
 // Local includes
-#include "vtkPlusVelmexStage.h"
-#include "vtkPlusStageDevice.h"
+#include "vtkPlusMonopriceStage.h"
+#include "vtkPlusPositioningDevice.h"
 #include "vtkIGSIOAccurateTimer.h"
 
 // VTK includes
@@ -19,15 +19,15 @@ See License.txt for details.
 
 
 //----------------------------------------------------------------------------
-// vtkPlusVelmexStage::vtkInternal
+// vtkPlusMonopriceStage::vtkInternal
 //----------------------------------------------------------------------------
 
-class vtkPlusVelmexStage::vtkInternal
+class vtkPlusMonopriceStage::vtkInternal
 {
 public:
-  vtkPlusVelmexStage* External;
+  vtkPlusMonopriceStage* External;
 
-  vtkInternal(vtkPlusVelmexStage* external)
+  vtkInternal(vtkPlusMonopriceStage* external)
     : External(external)
   {
   }
@@ -40,17 +40,17 @@ public:
 
 
 //----------------------------------------------------------------------------
-// vtkPlusVelmexStage
+// vtkPlusMonopriceStage
 //----------------------------------------------------------------------------
 
-vtkStandardNewMacro(vtkPlusVelmexStage);
+vtkStandardNewMacro(vtkPlusMonopriceStage);
 
 //----------------------------------------------------------------------------
-vtkPlusVelmexStage::vtkPlusVelmexStage()
-  : vtkPlusStageDevice()
+vtkPlusMonopriceStage::vtkPlusMonopriceStage()
+  : vtkPlusPositioningDevice()
   , Internal(new vtkInternal(this))
 {
-  LOG_TRACE("vtkPlusVelmexStage::vtkPlusVelmexStage()");
+  LOG_TRACE("vtkPlusMonopriceStage::vtkPlusMonopriceStage()");
 
   this->FrameNumber = 0;
   this->StartThreadForInternalUpdates = true;
@@ -58,29 +58,36 @@ vtkPlusVelmexStage::vtkPlusVelmexStage()
 }
 
 //----------------------------------------------------------------------------
-vtkPlusVelmexStage::~vtkPlusVelmexStage()
+vtkPlusMonopriceStage::~vtkPlusMonopriceStage()
 {
-  LOG_TRACE("vtkPlusVelmexStage::~vtkPlusVelmexStage()");
+  LOG_TRACE("vtkPlusMonopriceStage::~vtkPlusMonopriceStage()");
 
   delete Internal;
   Internal = nullptr;
 }
 
 //----------------------------------------------------------------------------
-void vtkPlusVelmexStage::PrintSelf(ostream& os, vtkIndent indent)
+void vtkPlusMonopriceStage::PrintSelf(ostream& os, vtkIndent indent)
 {
-  LOG_TRACE("vtkPlusVelmexStage::PrintSelf(ostream& os, vtkIndent indent)");
+  LOG_TRACE("vtkPlusMonopriceStage::PrintSelf(ostream& os, vtkIndent indent)");
   Superclass::PrintSelf(os, indent);
 }
 
 //----------------------------------------------------------------------------
-PlusStatus vtkPlusVelmexStage::ReadConfiguration(vtkXMLDataElement* rootConfigElement)
+PlusStatus vtkPlusMonopriceStage::ReadConfiguration(vtkXMLDataElement* rootConfigElement)
 {
-  LOG_TRACE("vtkPlusVelmexStage::ReadConfiguration");
+  LOG_TRACE("vtkPlusMonopriceStage::ReadConfiguration");
 
   XML_FIND_DEVICE_ELEMENT_REQUIRED_FOR_READING(deviceConfig, rootConfigElement);
 
+  // get position transform name from config
   XML_FIND_NESTED_ELEMENT_REQUIRED(dataSourcesElement, deviceConfig, "DataSources");
+  if (dataSourcesElement->GetNumberOfNestedElements() != 1)
+  {
+    LOG_ERROR("Stage device requires exactly one Datasource with type \"Tool\", to send the current stage position over OpenIGTLink.");
+    return PLUS_FAIL;
+  }
+
   for (int nestedElementIndex = 0; nestedElementIndex < dataSourcesElement->GetNumberOfNestedElements(); nestedElementIndex++)
   {
     vtkXMLDataElement* toolDataElement = dataSourcesElement->GetNestedElement(nestedElementIndex);
@@ -102,60 +109,61 @@ PlusStatus vtkPlusVelmexStage::ReadConfiguration(vtkXMLDataElement* rootConfigEl
       continue;
     }
 
+    this->SetPositionTransformName(toolId, this->GetToolReferenceFrameName());
+    LOG_WARNING(this->GetPositionTransformName());
   }
-
-  return PLUS_FAIL;
+  return PLUS_SUCCESS;
 }
 
 //----------------------------------------------------------------------------
-PlusStatus vtkPlusVelmexStage::WriteConfiguration(vtkXMLDataElement* rootConfigElement)
+PlusStatus vtkPlusMonopriceStage::WriteConfiguration(vtkXMLDataElement* rootConfigElement)
 {
-  LOG_TRACE("vtkPlusVelmexStage::WriteConfiguration");
+  LOG_TRACE("vtkPlusMonopriceStage::WriteConfiguration");
   XML_FIND_DEVICE_ELEMENT_REQUIRED_FOR_WRITING(deviceConfig, rootConfigElement);
+  return PLUS_SUCCESS;
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusMonopriceStage::InternalConnect()
+{
+  LOG_TRACE("vtkPlusMonopriceStage::InternalConnect");
+
+  return PLUS_SUCCESS;
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusMonopriceStage::InternalDisconnect()
+{
+  LOG_TRACE("vtkPlusMonopriceStage::InternalDisconnect");
+
   return PLUS_FAIL;
 }
 
 //----------------------------------------------------------------------------
-PlusStatus vtkPlusVelmexStage::InternalConnect()
+PlusStatus vtkPlusMonopriceStage::InternalStartRecording()
 {
-  LOG_TRACE("vtkPlusVelmexStage::InternalConnect");
-
+  LOG_TRACE("vtkPlusMonopriceStage::InternalStartRecording");
   return PLUS_FAIL;
 }
 
 //----------------------------------------------------------------------------
-PlusStatus vtkPlusVelmexStage::InternalDisconnect()
+PlusStatus vtkPlusMonopriceStage::InternalStopRecording()
 {
-  LOG_TRACE("vtkPlusVelmexStage::InternalDisconnect");
-
+  LOG_TRACE("vtkPlusMonopriceStage::InternalStopRecording");
   return PLUS_FAIL;
 }
 
 //----------------------------------------------------------------------------
-PlusStatus vtkPlusVelmexStage::InternalStartRecording()
+PlusStatus vtkPlusMonopriceStage::Probe()
 {
-  LOG_TRACE("vtkPlusVelmexStage::InternalStartRecording");
+  LOG_TRACE("vtkPlusMonopriceStage::Probe");
   return PLUS_FAIL;
 }
 
 //----------------------------------------------------------------------------
-PlusStatus vtkPlusVelmexStage::InternalStopRecording()
+PlusStatus vtkPlusMonopriceStage::InternalUpdate()
 {
-  LOG_TRACE("vtkPlusVelmexStage::InternalStopRecording");
-  return PLUS_FAIL;
-}
-
-//----------------------------------------------------------------------------
-PlusStatus vtkPlusVelmexStage::Probe()
-{
-  LOG_TRACE("vtkPlusVelmexStage::Probe");
-  return PLUS_FAIL;
-}
-
-//----------------------------------------------------------------------------
-PlusStatus vtkPlusVelmexStage::InternalUpdate()
-{
-  LOG_TRACE("vtkPlusVelmexStage::InternalUpdate");
+  LOG_TRACE("vtkPlusMonopriceStage::InternalUpdate");
 
   return PLUS_FAIL;
 }
@@ -164,44 +172,51 @@ PlusStatus vtkPlusVelmexStage::InternalUpdate()
 // STAGE METHODS
 //----------------------------------------------------------------------------
 
-PlusStatus vtkPlusVelmexStage::HomeAllAxes()
+PlusStatus vtkPlusMonopriceStage::HomeAllAxes()
 {
-  LOG_TRACE("vtkPlusVelmexStage::HomeAllAxes()");
+  LOG_TRACE("vtkPlusMonopriceStage::HomeAllAxes()");
+  // home all axes (G28)
   return PLUS_FAIL;
 }
 
-PlusStatus vtkPlusVelmexStage::PauseMovement()
+PlusStatus vtkPlusMonopriceStage::PauseMovement()
 {
-  LOG_TRACE("vtkPlusVelmexStage::PauseMovement()");
+  LOG_TRACE("vtkPlusMonopriceStage::PauseMovement()");
   return PLUS_FAIL;
 }
 
-PlusStatus vtkPlusVelmexStage::ResumeMovement()
+PlusStatus vtkPlusMonopriceStage::ResumeMovement()
 {
-  LOG_TRACE("vtkPlusVelmexStage::ResumeMovement()");
+  LOG_TRACE("vtkPlusMonopriceStage::ResumeMovement()");
   return PLUS_FAIL;
 }
 
-PlusStatus vtkPlusVelmexStage::StopMovement()
+PlusStatus vtkPlusMonopriceStage::StopMovement()
 {
-  LOG_TRACE("vtkPlusVelmexStage::StopMovement()");
+  LOG_TRACE("vtkPlusMonopriceStage::StopMovement()");
+  // emergency stop (M112)
   return PLUS_FAIL;
 }
 
-PlusStatus vtkPlusVelmexStage::MoveToAbsolute(const vtkMatrix4x4& position)
+PlusStatus vtkPlusMonopriceStage::MoveToAbsolute(const vtkMatrix4x4& position)
 {
-  LOG_TRACE("vtkPlusVelmexStage::MoveToAbsolute(const vtkMatrix4x4& position)");
+  LOG_TRACE("vtkPlusMonopriceStage::MoveToAbsolute(const vtkMatrix4x4& position)");
+  // move to position rapid (G0)
+  // move to position precise (G1)
   return PLUS_FAIL;
 }
 
-PlusStatus vtkPlusVelmexStage::MoveByRelative(const vtkMatrix4x4& position)
+PlusStatus vtkPlusMonopriceStage::MoveByRelative(const vtkMatrix4x4& position)
 {
-  LOG_TRACE("vtkPlusVelmexStage::MoveByRelative(const vtkMatrix4x4& position)");
+  LOG_TRACE("vtkPlusMonopriceStage::MoveByRelative(const vtkMatrix4x4& position)");
+  // move to position rapid (G0)
+  // move to position precise (G1)
   return PLUS_FAIL;
 }
 
-PlusStatus vtkPlusVelmexStage::GetCurrentPosition(vtkMatrix4x4* position)
+PlusStatus vtkPlusMonopriceStage::GetCurrentPosition(vtkMatrix4x4* position)
 {
-  LOG_TRACE("vtkPlusVelmexStage::GetCurrentPosition(vtkMatrix4x4* position)");
+  LOG_TRACE("vtkPlusMonopriceStage::GetCurrentPosition(vtkMatrix4x4* position)");
+  // get current position (M114)
   return PLUS_FAIL;
 }

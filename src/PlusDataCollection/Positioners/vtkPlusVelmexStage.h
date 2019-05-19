@@ -8,7 +8,7 @@ See License.txt for details.
 #define __vtkPlusVelmexStage_h
 
 #include "vtkPlusDataCollectionExport.h"
-#include "vtkPlusStageDevice.h"
+#include "vtkPlusPositioningDevice.h"
 
 /*!
 \class vtkPlusVelmexStage
@@ -16,11 +16,11 @@ See License.txt for details.
 with SENC-150 encoders
 \ingroup PlusLibDataCollection
 */
-class vtkPlusDataCollectionExport vtkPlusVelmexStage : public vtkPlusStageDevice
+class vtkPlusDataCollectionExport vtkPlusVelmexStage : public vtkPlusPositioningDevice
 {
 public:
   static vtkPlusVelmexStage* New();
-  vtkTypeMacro(vtkPlusVelmexStage, vtkPlusDevice);
+  vtkTypeMacro(vtkPlusVelmexStage, vtkPlusPositioningDevice);
   void PrintSelf(ostream& os, vtkIndent indent);
 
   /* Device is a hardware tracker. */

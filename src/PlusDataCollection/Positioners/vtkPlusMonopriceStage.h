@@ -8,18 +8,18 @@ See License.txt for details.
 #define __vtkPlusMonopriceStage_h
 
 #include "vtkPlusDataCollectionExport.h"
-#include "vtkPlusStageDevice.h"
+#include "vtkPlusPositioningDevice.h"
 
 /*!
 \class vtkPlusMonopriceStage
 \brief Interface to a Monoprice 3D printer
 \ingroup PlusLibDataCollection
 */
-class vtkPlusDataCollectionExport vtkPlusMonopriceStage : public vtkPlusStageDevice
+class vtkPlusDataCollectionExport vtkPlusMonopriceStage : public vtkPlusPositioningDevice
 {
 public:
   static vtkPlusMonopriceStage *New();
-  vtkTypeMacro(vtkPlusMonopriceStage, vtkPlusDevice);
+  vtkTypeMacro(vtkPlusMonopriceStage, vtkPlusPositioningDevice);
   void PrintSelf(ostream& os, vtkIndent indent);
 
   /* Device is a hardware tracker. */

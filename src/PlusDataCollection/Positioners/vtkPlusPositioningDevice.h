@@ -4,22 +4,23 @@ Copyright (c) Laboratory for Percutaneous Surgery. All rights reserved.
 See License.txt for details.
 =========================================================Plus=header=end*/
 
-#ifndef __vtkPlusStageDevice_h
-#define __vtkPlusStageDevice_h
+#ifndef __vtkPlusPositioningDevice_h
+#define __vtkPlusPositioningDevice_h
 
 #include "vtkPlusDataCollectionExport.h"
 #include "vtkPlusDevice.h"
+#include <string>
 
 /*!
-\class vtkPlusStageDevice
+\class vtkPlusPositioningDevice
 \brief Abstract class for handling positioning stage devices
 \ingroup PlusLibDataCollection
 */
-class vtkPlusDataCollectionExport vtkPlusStageDevice : public vtkPlusDevice
+class vtkPlusDataCollectionExport vtkPlusPositioningDevice : public vtkPlusDevice
 {
 public:
-  static vtkPlusStageDevice *New();
-  vtkTypeMacro(vtkPlusStageDevice, vtkPlusDevice);
+  static vtkPlusPositioningDevice *New();
+  vtkTypeMacro(vtkPlusPositioningDevice, vtkPlusDevice);
   void PrintSelf(ostream& os, vtkIndent indent);
 
   /* Device is a hardware tracker. */
@@ -32,27 +33,9 @@ public:
   /*! Write configuration to xml data */
   virtual PlusStatus WriteConfiguration(vtkXMLDataElement* config);
 
-  /*! Connect to device */
-  PlusStatus InternalConnect();
-
-  /*! Disconnect from device */
-  virtual PlusStatus InternalDisconnect();
-
-  /*! Start the tracking system. */
-  PlusStatus InternalStartRecording();
-
-  /*! Stop the tracking system and bring it back to its initial state. */
-  PlusStatus InternalStopRecording();
-
-  /*! Probe to see if the tracking system is present. */
-  PlusStatus Probe();
-
-  /*! Perform update */
-  PlusStatus InternalUpdate();
-
 protected:
-  vtkPlusStageDevice();
-  ~vtkPlusStageDevice();
+  vtkPlusPositioningDevice();
+  ~vtkPlusPositioningDevice();
 
   // movement methods
   virtual PlusStatus HomeAllAxes();
@@ -62,28 +45,29 @@ protected:
   virtual PlusStatus MoveToAbsolute(const vtkMatrix4x4& position);
   virtual PlusStatus MoveByRelative(const vtkMatrix4x4& position);
 
-  // position methods
-  virtual PlusStatus GetCurrentPosition(vtkMatrix4x4* position);
-
   // getters and setters for boundaries
   PlusStatus GetHardBoundary(vtkMatrix4x4* boundaryMin, vtkMatrix4x4* boundaryMax);
-  PlusStatus SetHardBoundary(const vtkMatrix4x4& boundaryMin, const vtkMatrix4x4& boundaryMax);
+  PlusStatus SetHardBoundary(float x_min, float y_min, float z_min, float x_max, float y_max, float z_max);
   PlusStatus GetSoftBoundary(vtkMatrix4x4* boundaryMin, vtkMatrix4x4* boundaryMax);
-  PlusStatus SetSoftBoundary(const vtkMatrix4x4& boundaryMin, const vtkMatrix4x4& boundaryMax);
-  PlusStatus PostBoundaryUpdate(); // update x, y and z to be in increasing order after setting a new boundary
+  PlusStatus SetSoftBoundary(float x_min, float y_min, float z_min, float x_max, float y_max, float z_max);
+  PlusStatus PostBoundaryUpdate(); // update x, y and z to be in increasing order after setting a new boundary, bring stage within boundary
 
   // getter and setter for the offset
   PlusStatus GetOffset(vtkMatrix4x4* offset);
-  PlusStatus SetOffset(const vtkMatrix4x4& newOffset);
+  PlusStatus SetOffset(float x_offset, float y_offset, float z_offset);
 
   // methods to check vaidity of a movement
   bool CheckWithinBoundaries(vtkMatrix4x4* position);
   bool CheckWithinHardBoundary(vtkMatrix4x4* position);
   bool CheckWithinSoftBoundary(vtkMatrix4x4* position);
+  
+  // get igsioTransformName of tool position
+  std::string GetPositionTransformName();
+  PlusStatus SetPositionTransformName(std::string aFrom, std::string aTo);
 
 private:
-  vtkPlusStageDevice(const vtkPlusStageDevice&); // Not implemented
-  void operator=(const vtkPlusStageDevice&); // Not implemented
+  vtkPlusPositioningDevice(const vtkPlusPositioningDevice&); // Not implemented
+  void operator=(const vtkPlusPositioningDevice&); // Not implemented
 
   // offset allows the stage to be 'zeroed', enabling sending of transforms relative to a user defined
   // coordinate frame (does not need to be within stage hard boundary, but probably should be)
@@ -97,9 +81,13 @@ private:
   // this is to prevent collisions between a probe and the stage deck, etc.
   vtkSmartPointer<vtkMatrix4x4> SoftBoundaryMin;
   vtkSmartPointer<vtkMatrix4x4> SoftBoundaryMax;
+  bool SoftBoundariesEnabled;
 
   // private boundary check helper
   bool PerformBoundaryCheck(vtkMatrix4x4* position, vtkMatrix4x4* boundaryMin, vtkMatrix4x4* boundaryMax);
+
+  // name of the tool position transform
+  igsioTransformName PositionTransformName;
 };
 
 #endif

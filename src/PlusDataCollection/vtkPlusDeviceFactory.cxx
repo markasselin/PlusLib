@@ -20,8 +20,8 @@ See License.txt for details.
 #include "vtkPlusVirtualVolumeReconstructor.h"
 #include "vtkPlusImageProcessorVideoSource.h"
 #include "vtkPlusGenericSerialDevice.h"
-#include "StageControl/vtkPlusMonopriceStage.h"
-#include "StageControl/vtkPlusVelmexStage.h"
+#include "Positioners/vtkPlusMonopriceStage.h"
+#include "Positioners/vtkPlusVelmexStage.h"
 #ifdef PLUS_USE_TextRecognizer
   #include "vtkPlusVirtualTextRecognizer.h"
 #endif
