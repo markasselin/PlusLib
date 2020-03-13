@@ -98,6 +98,7 @@ typedef unsigned long int vtkMTimeType;
 #cmakedefine PLUS_USE_USDIGITALENCODERS_TRACKER
 #cmakedefine PLUS_USE_NVIDIA_DVP
 #cmakedefine PLUS_USE_OvrvisionPro
+#cmakedefine PLUS_USE_FRANKA_PANDA
 #cmakedefine PLUS_USE_AGILENT
 #cmakedefine PLUS_USE_OpenCV_VIDEO
 #cmakedefine PLUS_USE_OPENHAPTICS

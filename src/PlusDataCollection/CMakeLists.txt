@@ -56,6 +56,7 @@ OPTION(PLUS_USE_BLACKMAGIC_DECKLINK "Provide support for BlackMagic DeckLink cap
 OPTION(PLUS_USE_INFRARED_SEEK_CAM "Provide support for capturing an Infrared Seek Cam" OFF)
 OPTION(PLUS_USE_INFRARED_TEQ1_CAM "Provide support for capturing an Infrared Therma Expert Q1 Camera capture stream" OFF)
 OPTION(PLUS_USE_WITMOTIONTRACKER "Provide support for the WitMotion class of inertial measurement units" OFF)
+OPTION(PLUS_USE_FRANKA_PANDA "Provide support for Franka Panda robot arms." OFF)
 
 OPTION(PLUS_USE_LEAPMOTION "Provide support for the LeapMotion hand tracker" OFF)
 IF(PLUS_USE_LEAPMOTION)
@@ -2186,6 +2187,43 @@ IF(PLUS_USE_OvrvisionPro)
   LIST(APPEND ${PROJECT_NAME}_LIBS
     OvrvisionPro
     )
+ENDIF()
+
+# --------------------------------------------------------------------------
+# FRANKA PANDA
+IF (PLUS_USE_FRANKA_PANDA)
+
+  # find libfranka
+  find_package(franka REQUIRED)
+
+  SET(Franka_SRCS
+    FrankaEmika/PlusFranka.cxx
+    FrankaEmika/vtkPlusFrankaRobot.cxx
+    )
+
+  IF(MSVC OR ${CMAKE_GENERATOR} MATCHES "Xcode")
+    SET(Franka_HDRS
+      FrankaEmika/PlusFranka.h
+      FrankaEmika/vtkPlusFrankaRobot.h
+      )
+  ENDIF()
+
+  LIST(APPEND ${PROJECT_NAME}_SRCS
+    ${Franka_SRCS}
+    )
+
+  LIST(APPEND ${PROJECT_NAME}_HDRS
+    ${Franka_HDRS}
+    )
+
+  LIST(APPEND ${PROJECT_NAME}_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}/FrankaEmika
+    )
+  
+  LIST(APPEND ${PROJECT_NAME}_LIBS
+    Franka::Franka
+    )
+
 ENDIF()
 
 # --------------------------------------------------------------------------

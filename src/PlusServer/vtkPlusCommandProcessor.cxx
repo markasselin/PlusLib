@@ -25,6 +25,9 @@ See License.txt for details.
 #ifdef PLUS_USE_ATRACSYS
   #include "vtkPlusAtracsysCommand.h"
 #endif
+#ifdef PLUS_USE_FRANKA_PANDA
+  #include "vtkPlusFrankaCommand.h"
+#endif
 
 #include "vtkPlusAddRecordingDeviceCommand.h"
 #include "vtkPlusGetPolydataCommand.h"
@@ -82,6 +85,9 @@ vtkPlusCommandProcessor::vtkPlusCommandProcessor()
 #endif
 #ifdef PLUS_USE_ATRACSYS
   RegisterPlusCommand(vtkSmartPointer<vtkPlusAtracsysCommand>::New());
+#endif
+#ifdef PLUS_USE_FRANKA_PANDA
+  RegisterPlusCommand(vtkSmartPointer<vtkPlusFrankaCommand>::New());
 #endif
 }
 

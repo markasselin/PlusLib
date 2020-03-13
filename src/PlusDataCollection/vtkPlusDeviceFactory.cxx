@@ -214,6 +214,13 @@ See License.txt for details.
 #endif
 
 //----------------------------------------------------------------------------
+// Robots
+
+#ifdef PLUS_USE_FRANKA_PANDA
+#include "vtkPlusFrankaRobot.h"
+#endif
+
+//----------------------------------------------------------------------------
 
 vtkStandardNewMacro(vtkPlusDeviceFactory);
 
@@ -391,6 +398,10 @@ vtkPlusDeviceFactory::vtkPlusDeviceFactory()
 
 #ifdef PLUS_USE_STEAMVR
   RegisterDevice("SteamVRTracker", "vtkPlusSteamVRTracker", (PointerToDevice)& vtkPlusSteamVRTracker::New);
+#endif
+
+#ifdef PLUS_USE_FRANKA_PANDA
+  RegisterDevice("FrankaPanda", "vtkPlusFrankaRobot", (PointerToDevice)& vtkPlusFrankaRobot::New);
 #endif
 
   // Virtual Devices
