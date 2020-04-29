@@ -55,12 +55,10 @@ public:
   // COMMANDS
   // robot
   static const char* FRANKA_ROBOT_READ_STATE;
+  static const char* FRANKA_ROBOT_ERROR_RECOVERY;
   static const char* FRANKA_SET_VIRTUAL_WALL;
   static const char* FRANKA_MOVE_CARTESIAN_POSE;
   static const char* FRANKA_MOVE_CARTESIAN_VELOCITIES;
-  static const char* FRANKA_MOVE_JOINT_POSITIONS;
-  static const char* FRANKA_MOVE_JOINT_VELOCITIES;
-  static const char* FRANKA_MOVE_TORQUES;
   // gripper
   static const char* FRANKA_GRIPPER_READ_STATE;
   static const char* FRANKA_GRIPPER_HOME;
@@ -80,15 +78,6 @@ public:
 
   /*! */
   PlusStatus MoveCartesianVelocities();
-
-  /*! */
-  PlusStatus MoveJointPositions();
-
-  /*! */
-  PlusStatus MoveJointVelocities();
-
-  /*! */
-  PlusStatus MoveTorques();
 
   /*! */
   PlusStatus ReadGripperState();

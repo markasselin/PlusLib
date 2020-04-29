@@ -21,6 +21,19 @@ See License.txt for details.
 
 vtkStandardNewMacro(vtkPlusFrankaRobot);
 
+// robot
+const char* vtkPlusFrankaRobot::FRANKA_ROBOT_READ_STATE           = "ReadState";
+const char* vtkPlusFrankaRobot::FRANKA_ROBOT_ERROR_RECOVERY       = "ErrorRecovery";
+const char* vtkPlusFrankaRobot::FRANKA_SET_VIRTUAL_WALL           = "SetVirtualWall";
+const char* vtkPlusFrankaRobot::FRANKA_MOVE_CARTESIAN_POSE        = "MoveCartesianPose";
+const char* vtkPlusFrankaRobot::FRANKA_MOVE_CARTESIAN_VELOCITIES  = "MoveCartesianVelocities";
+// gripper
+const char* vtkPlusFrankaRobot::FRANKA_GRIPPER_READ_STATE         = "ReadGripperState";
+const char* vtkPlusFrankaRobot::FRANKA_GRIPPER_HOME               = "GripperHome";
+const char* vtkPlusFrankaRobot::FRANKA_GRIPPER_GRASP              = "GripperGrasp";
+const char* vtkPlusFrankaRobot::FRANKA_GRIPPER_MOVE               = "GripperMove";
+const char* vtkPlusFrankaRobot::FRANKA_GRIPPER_STOP               = "GripperStop";
+
 //----------------------------------------------------------------------------
 class vtkPlusFrankaRobot::vtkInternal
 {
@@ -151,3 +164,56 @@ PlusStatus vtkPlusFrankaRobot::InternalUpdate()
 //----------------------------------------------------------------------------
 // Command methods
 //----------------------------------------------------------------------------
+
+PlusStatus vtkPlusFrankaRobot::ReadRobotState()
+{
+  return PLUS_FAIL;
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusFrankaRobot::SetVirtualWall()
+{
+  return PLUS_FAIL;
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusFrankaRobot::MoveCartesianPose()
+{
+  return PLUS_FAIL;
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusFrankaRobot::MoveCartesianVelocities()
+{
+  return PLUS_FAIL;
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusFrankaRobot::ReadGripperState()
+{
+  return PLUS_FAIL;
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusFrankaRobot::GripperHome()
+{
+  return PLUS_FAIL;
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusFrankaRobot::GripperGrasp()
+{
+  return PLUS_FAIL;
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusFrankaRobot::GripperMove()
+{
+  return PLUS_FAIL;
+}
+
+//----------------------------------------------------------------------------
+PlusStatus vtkPlusFrankaRobot::GripperStop()
+{
+  return PLUS_FAIL;
+}
