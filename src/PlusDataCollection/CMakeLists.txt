@@ -57,6 +57,7 @@ OPTION(PLUS_USE_INFRARED_SEEK_CAM "Provide support for capturing an Infrared See
 OPTION(PLUS_USE_ANDOR_CAMERA "Provide support for capturing images from Andor Camera. Requires PLUS_USE_OpenCV." OFF)
 OPTION(PLUS_USE_INFRARED_TEQ1_CAM "Provide support for capturing an Infrared Therma Expert Q1 Camera capture stream" OFF)
 OPTION(PLUS_USE_WITMOTIONTRACKER "Provide support for the WitMotion class of inertial measurement units" OFF)
+OPTION(PLUS_USE_DUMMY_TRACKER "Simulated tracker device for testing sending metadata on transforms" OFF)
 
 OPTION(PLUS_USE_LEAPMOTION "Provide support for the LeapMotion hand tracker" OFF)
 IF(PLUS_USE_LEAPMOTION)
@@ -2481,6 +2482,32 @@ IF(PLUS_USE_STEAMVR)
   LIST(APPEND External_Libraries_Install
     ${_install_file}
     )
+ENDIF()
+
+# --------------------------------------------------------------------------
+# Dummy Tracker support
+IF(PLUS_USE_DUMMY_TRACKER)
+
+  SET(DUMMY_TRACKER_SRCS
+    Dummy/vtkPlusDummyTracker.cxx
+    )
+
+  SET(DUMMY_TRACKER_HDRS
+    Dummy/vtkPlusDummyTracker.h
+    )
+
+  LIST(APPEND ${PROJECT_NAME}_SRCS
+    ${DUMMY_TRACKER_SRCS}
+    )
+
+  LIST(APPEND ${PROJECT_NAME}_HDRS
+    ${DUMMY_TRACKER_HDRS}
+    )
+
+  LIST(APPEND ${PROJECT_NAME}_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}/Dummy
+    )
+    
 ENDIF()
 
 # --------------------------------------------------------------------------

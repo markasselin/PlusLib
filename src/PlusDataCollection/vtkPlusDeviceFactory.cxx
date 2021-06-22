@@ -93,6 +93,9 @@ See License.txt for details.
 #ifdef PLUS_USE_STEAMVR
 #include "vtkPlusSteamVRTracker.h"
 #endif
+#ifdef PLUS_USE_DUMMY_TRACKER
+#include "vtkPlusDummyTracker.h"
+#endif
 
 //----------------------------------------------------------------------------
 // Video sources
@@ -399,6 +402,10 @@ vtkPlusDeviceFactory::vtkPlusDeviceFactory()
 
 #ifdef PLUS_USE_STEAMVR
   RegisterDevice("SteamVRTracker", "vtkPlusSteamVRTracker", (PointerToDevice)& vtkPlusSteamVRTracker::New);
+#endif
+
+#ifdef PLUS_USE_DUMMY_TRACKER
+  RegisterDevice("DummyTracker", "vtkPlusDummyTracker", (PointerToDevice)& vtkPlusDummyTracker::New);
 #endif
 
   // Virtual Devices
